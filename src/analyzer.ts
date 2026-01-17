@@ -340,77 +340,25 @@ export class CodeAnalyzer {
             exports: []
         };
 
-        // Create a map to track original name -> unique name mapping per file
-        const nameMapping = new Map<string, Map<string, string>>();
-
         for (const analysis of analyses) {
-            const fileName = analysis.fileName.split('/').pop() || 'unknown';
-            const fileMapping = new Map<string, string>();
-            
-            // Merge functions with file context
+            // Merge functions
             for (const [name, func] of analysis.functions) {
-                const uniqueName = `${name} (${fileName})`;
-                fileMapping.set(name, uniqueName);
-                
-                merged.functions.set(uniqueName, { 
+                const baseName = name;
+                const fileLabel = analysis.fileName.split('/').pop() || analysis.fileName;
+
+                // Use a unique key, but DON'T change func.name
+                const uniqueKey = `${baseName}::${fileLabel}`;
+
+                merged.functions.set(uniqueKey, { 
                     ...func, 
-                    name: uniqueName,
-                    // Add file metadata for clustering
-                    fileName: fileName
+                    name: baseName,          // ✅ clean function name only
+                    fileName: analysis.fileName // full path still stored here
                 });
             }
-            
-            nameMapping.set(fileName, fileMapping);
-            
+
             // Merge imports and exports
             merged.imports.push(...analysis.imports);
             merged.exports.push(...analysis.exports);
-        }
-
-        // Fix cross-file call references
-        for (const [uniqueName, func] of merged.functions) {
-            const fileName = func.fileName!;
-            const fileMapping = nameMapping.get(fileName);
-            
-            if (fileMapping) {
-                // Update calls to use unique names
-                const updatedCalls: string[] = [];
-                for (const call of func.calls) {
-                    // First try same file
-                    if (fileMapping.has(call)) {
-                        updatedCalls.push(fileMapping.get(call)!);
-                    } else {
-                        // Try all other files
-                        let found = false;
-                        for (const [otherFile, otherMapping] of nameMapping) {
-                            if (otherMapping.has(call)) {
-                                updatedCalls.push(otherMapping.get(call)!);
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            // Keep original if not found (might be external)
-                            updatedCalls.push(call);
-                        }
-                    }
-                }
-                func.calls = updatedCalls;
-            }
-        }
-
-        // Rebuild calledBy relationships with unique names
-        for (const func of merged.functions.values()) {
-            func.calledBy = [];
-        }
-        
-        for (const [funcName, funcNode] of merged.functions) {
-            for (const calledFunc of funcNode.calls) {
-                const targetFunc = merged.functions.get(calledFunc);
-                if (targetFunc) {
-                    targetFunc.calledBy.push(funcName);
-                }
-            }
         }
 
         return merged;

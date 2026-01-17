@@ -805,10 +805,24 @@ export class FlowVisualizer {
                 nodeG.addEventListener('mouseenter', () => {
                     if (!isDraggingNode) {
                         nodeG.classList.add('highlighted');
+                        if (autoNavigate) {
+                            vscode.postMessage({
+                                command: 'navigateToFunction',
+                                functionName: func.name,
+                                line: func.startLine
+                            });
+                        }
+                    }
+                });
+
+                nodeG.addEventListener('dblclick', (e) => {
+                    e.stopPropagation();
+                    if (!autoNavigate) {  // Only navigate on double-click when auto-navigate is OFF
                         vscode.postMessage({
                             command: 'navigateToFunction',
                             functionName: func.name,
-                            line: func.startLine
+                            line: func.startLine,
+                            fileName: func.fileName
                         });
                     }
                 });
