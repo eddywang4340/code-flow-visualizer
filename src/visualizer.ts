@@ -279,28 +279,39 @@ export class FlowVisualizer {
         }
 
         .file-block {
-            fill: rgba(255, 255, 255, 0.04);
-            stroke: rgba(255, 255, 255, 0.25);
+            fill: rgba(59, 130, 246, 0.08);
+            stroke: rgba(59, 130, 246, 0.4);
             stroke-width: 1.5;
+            transition: all 0.2s ease;
         }
 
         .file-block:hover {
-            fill: var(--vscode-list-hoverBackground);
-            stroke: var(--vscode-focusBorder);
-            stroke-width: 3px;
+            fill: rgba(59, 130, 246, 0.15);
+            stroke: rgba(59, 130, 246, 0.8);
+            stroke-width: 3;
         }
 
         .file-block-label {
             fill: #e5e7eb;
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 600;
             pointer-events: none;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
         }
 
         .file-block-count {
             fill: #9ca3af;
-            font-size: 11px;
+            font-size: 12px;
             pointer-events: none;
+        }
+
+        .file-block-hint {
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .file-block-group:hover .file-block-hint {
+            opacity: 1;
         }
 
         .complexity-low { fill: #4CAF50; }
@@ -462,10 +473,10 @@ export class FlowVisualizer {
         }
 
         function renderOverviewBlocks(g, functions, positions) {
-            // Group functions by file
             fileClusters.clear();
             clusterBounds.clear();
             
+            // Group functions by file
             functions.forEach((func, i) => {
                 if (func.fileName && positions[i].x > -1000) {
                     if (!fileClusters.has(func.fileName)) {
@@ -475,9 +486,10 @@ export class FlowVisualizer {
                 }
             });
 
-            // Draw file blocks
+            // Draw file blocks with improved styling
             fileClusters.forEach((nodes, fileName) => {
                 if (nodes.length === 0) return;
+                
                 // Calculate bounding box
                 let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
                 nodes.forEach(node => {
@@ -487,15 +499,14 @@ export class FlowVisualizer {
                     maxY = Math.max(maxY, node.pos.y);
                 });
 
-                const MAX_WIDTH = 600;
-                const MAX_HEIGHT = 400;
-                const padding = 40; // Increased from 40 to 80 for more spacing
+                // IMPROVED: Better sizing with minimum dimensions
+                const MIN_WIDTH = 200;
+                const MIN_HEIGHT = 120;
+                const padding = 35;
 
-                let width = maxX - minX + 2 * padding;
-                let height = maxY - minY + 2 * padding;
+                let width = Math.max(MIN_WIDTH, maxX - minX + 2 * padding);
+                let height = Math.max(MIN_HEIGHT, maxY - minY + 2 * padding);
 
-                width = Math.min(width, MAX_WIDTH);
-                height = Math.min(height, MAX_HEIGHT);
                 const bounds = {
                     x: minX - padding,
                     y: minY - padding,
@@ -506,44 +517,90 @@ export class FlowVisualizer {
                 };
                 clusterBounds.set(fileName, bounds);
 
-                // Draw file block
+                // Create block group
                 const blockG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
                 blockG.setAttribute('class', 'file-block-group');
                 blockG.setAttribute('data-file-name', fileName);
 
+                // Draw rounded rectangle
                 const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
                 rect.setAttribute('class', 'file-block');
                 rect.setAttribute('x', bounds.x.toString());
                 rect.setAttribute('y', bounds.y.toString());
                 rect.setAttribute('width', bounds.width.toString());
                 rect.setAttribute('height', bounds.height.toString());
-                rect.setAttribute('rx', '10');
+                rect.setAttribute('rx', '12');
                 blockG.appendChild(rect);
 
-                // File name label - show only the filename, not the full path
+                // IMPROVED: Extract and truncate filename intelligently
+                const fileNameOnly = fileName.split(/[\\/]/).pop() || fileName;
+                let displayName = fileNameOnly;
+                if (displayName.length > 28) {
+                    const ext = displayName.split('.').pop();
+                    const nameWithoutExt = displayName.substring(0, displayName.lastIndexOf('.'));
+                    if (ext && nameWithoutExt.length > 20) {
+                        displayName = nameWithoutExt.substring(0, 20) + '...' + ext;
+                    } else {
+                        displayName = displayName.substring(0, 25) + '...';
+                    }
+                }
+
+                // File name label - centered vertically in the block
                 const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 label.setAttribute('class', 'file-block-label');
                 label.setAttribute('x', (bounds.x + bounds.width / 2).toString());
-                label.setAttribute('y', (bounds.y + 28).toString());
+                label.setAttribute('y', (bounds.y + bounds.height / 2 - 5).toString());
                 label.setAttribute('text-anchor', 'middle');
-                // Always show only the filename
-                const fileNameOnly = fileName.split(/[\\/]/).pop() || fileName;
-                label.textContent = fileNameOnly;
+                label.setAttribute('dominant-baseline', 'middle');
+                label.textContent = displayName;
                 blockG.appendChild(label);
 
-                // Function count
+                // Function count below filename
                 const count = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 count.setAttribute('class', 'file-block-count');
                 count.setAttribute('x', (bounds.x + bounds.width / 2).toString());
-                count.setAttribute('y', (bounds.y + 50).toString());
+                count.setAttribute('y', (bounds.y + bounds.height / 2 + 18).toString());
                 count.setAttribute('text-anchor', 'middle');
-                count.textContent = nodes.length + ' function' + (nodes.length !== 1 ? 's' : '');
+                count.setAttribute('dominant-baseline', 'middle');
+                
+                // IMPROVED: Better function count display
+                const funcCount = nodes.length;
+                if (funcCount === 1) {
+                    count.textContent = '1 function';
+                } else if (funcCount < 10) {
+                    count.textContent = funcCount + ' functions';
+                } else {
+                    count.textContent = funcCount + ' functions';
+                }
                 blockG.appendChild(count);
+                
+                // IMPROVED: Add hover effect hint
+                const hoverHint = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                hoverHint.setAttribute('class', 'file-block-hint');
+                hoverHint.setAttribute('x', (bounds.x + bounds.width / 2).toString());
+                hoverHint.setAttribute('y', (bounds.y + bounds.height - 15).toString());
+                hoverHint.setAttribute('text-anchor', 'middle');
+                hoverHint.setAttribute('fill', 'rgba(255, 255, 255, 0.4)');
+                hoverHint.setAttribute('font-size', '10px');
+                hoverHint.textContent = 'Click to expand';
+                blockG.appendChild(hoverHint);
+                
                 // Click handler to zoom into this file
                 blockG.style.cursor = 'pointer';
                 blockG.addEventListener('click', (e) => {
                     e.stopPropagation();
                     zoomToFile(fileName, bounds);
+                });
+
+                // IMPROVED: Add hover effect
+                blockG.addEventListener('mouseenter', () => {
+                    rect.style.strokeWidth = '3';
+                    rect.style.filter = 'brightness(1.2)';
+                });
+                
+                blockG.addEventListener('mouseleave', () => {
+                    rect.style.strokeWidth = '1.5';
+                    rect.style.filter = 'none';
                 });
 
                 g.appendChild(blockG);
@@ -863,45 +920,52 @@ export class FlowVisualizer {
             const clusterArray = Array.from(clusters.entries());
             const numClusters = clusterArray.length;
             
-            // Calculate cluster grid layout with more spacing
-            const cols = Math.ceil(Math.sqrt(numClusters));
+            // IMPROVED: Better grid calculation with more spacing
+            const cols = Math.ceil(Math.sqrt(numClusters * 1.5)); // Wider grid
             const rows = Math.ceil(numClusters / cols);
-            // Increased margins and spacing for better visual separation
-            const clusterWidth = (width - 300) / cols; // Increased from 100 to 300
-            const clusterHeight = (height - 300) / rows; // Increased from 100 to 300
+            
+            // IMPROVED: Much larger spacing between clusters
+            const horizontalMargin = 400;
+            const verticalMargin = 300;
+            const clusterWidth = Math.max(250, (width - horizontalMargin) / cols);
+            const clusterHeight = Math.max(200, (height - verticalMargin) / rows);
 
             const positions = new Array(functions.length);
 
             clusterArray.forEach(([fileName, nodes], clusterIndex) => {
                 const col = clusterIndex % cols;
                 const row = Math.floor(clusterIndex / cols);
-                // Updated starting position to match new margins (300/2 = 150)
-                const clusterCenterX = 150 + col * clusterWidth + clusterWidth / 2;
-                const clusterCenterY = 150 + row * clusterHeight + clusterHeight / 2;
+                
+                // IMPROVED: Better starting position with more margin
+                const clusterCenterX = horizontalMargin/2 + col * clusterWidth + clusterWidth / 2;
+                const clusterCenterY = verticalMargin/2 + row * clusterHeight + clusterHeight / 2;
 
+                // Initialize positions within cluster with tighter initial spread
                 const clusterPositions = nodes.map(() => ({
-                    x: clusterCenterX + (Math.random() - 0.5) * (clusterWidth * 0.6),
-                    y: clusterCenterY + (Math.random() - 0.5) * (clusterHeight * 0.6),
+                    x: clusterCenterX + (Math.random() - 0.5) * (clusterWidth * 0.4),
+                    y: clusterCenterY + (Math.random() - 0.5) * (clusterHeight * 0.4),
                     vx: 0,
                     vy: 0
                 }));
 
-                for (let iter = 0; iter < 100; iter++) {
+                // IMPROVED: Better force simulation parameters
+                for (let iter = 0; iter < 120; iter++) {
+                    // Repulsion between nodes in same cluster
                     for (let i = 0; i < clusterPositions.length; i++) {
                         for (let j = i + 1; j < clusterPositions.length; j++) {
                             const dx = clusterPositions[j].x - clusterPositions[i].x;
                             const dy = clusterPositions[j].y - clusterPositions[i].y;
                             const distance = Math.sqrt(dx * dx + dy * dy) || 1;
-                            const minDistance = 100;
+                            const minDistance = 80; // Minimum spacing between nodes
                             
                             if (distance < minDistance) {
-                                const force = (minDistance - distance) / distance * 3;
+                                const force = (minDistance - distance) / distance * 2;
                                 clusterPositions[i].vx -= (dx / distance) * force;
                                 clusterPositions[i].vy -= (dy / distance) * force;
                                 clusterPositions[j].vx += (dx / distance) * force;
                                 clusterPositions[j].vy += (dy / distance) * force;
                             } else {
-                                const force = 1500 / (distance * distance);
+                                const force = 800 / (distance * distance);
                                 clusterPositions[i].vx -= (dx / distance) * force;
                                 clusterPositions[i].vy -= (dy / distance) * force;
                                 clusterPositions[j].vx += (dx / distance) * force;
@@ -910,6 +974,7 @@ export class FlowVisualizer {
                         }
                     }
 
+                    // Attraction for function calls (within same cluster)
                     nodes.forEach(({func}, i) => {
                         func.calls.forEach(calledFunc => {
                             const j = nodes.findIndex(n => n.func.name === calledFunc);
@@ -917,7 +982,7 @@ export class FlowVisualizer {
                                 const dx = clusterPositions[j].x - clusterPositions[i].x;
                                 const dy = clusterPositions[j].y - clusterPositions[i].y;
                                 const distance = Math.sqrt(dx * dx + dy * dy) || 1;
-                                const force = distance * 0.01;
+                                const force = distance * 0.008;
                                 
                                 clusterPositions[i].vx += (dx / distance) * force;
                                 clusterPositions[i].vy += (dy / distance) * force;
@@ -927,23 +992,26 @@ export class FlowVisualizer {
                         });
                     });
 
+                    // Center attraction (keep cluster together)
                     clusterPositions.forEach(pos => {
                         const dx = clusterCenterX - pos.x;
                         const dy = clusterCenterY - pos.y;
                         const distance = Math.sqrt(dx * dx + dy * dy);
-                        const force = distance * 0.005;
+                        const force = distance * 0.003;
                         
                         pos.vx += (dx / distance) * force;
                         pos.vy += (dy / distance) * force;
                     });
 
+                    // Update positions with damping
                     clusterPositions.forEach(pos => {
                         pos.x += pos.vx;
                         pos.y += pos.vy;
-                        pos.vx *= 0.85;
-                        pos.vy *= 0.85;
+                        pos.vx *= 0.8;
+                        pos.vy *= 0.8;
 
-                        const margin = 40;
+                        // Keep within cluster bounds with margin
+                        const margin = 30;
                         pos.x = Math.max(clusterCenterX - clusterWidth/2 + margin, 
                                         Math.min(clusterCenterX + clusterWidth/2 - margin, pos.x));
                         pos.y = Math.max(clusterCenterY - clusterHeight/2 + margin, 
@@ -951,6 +1019,7 @@ export class FlowVisualizer {
                     });
                 }
 
+                // Assign final positions
                 nodes.forEach(({index}, i) => {
                     positions[index] = clusterPositions[i];
                 });
@@ -959,6 +1028,7 @@ export class FlowVisualizer {
             fileClusters = clusters;
             return positions;
         }
+
 
         function calculateForceLayout(functions, width, height) {
             const cols = Math.ceil(Math.sqrt(functions.length));
