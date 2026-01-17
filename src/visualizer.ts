@@ -301,6 +301,12 @@ export class FlowVisualizer {
             <button onclick="toggleLayout()">Change Layout</button>
             <button onclick="zoomIn()">Zoom In</button>
             <button onclick="zoomOut()">Zoom Out</button>
+
+            <label style="margin-left: 20px; font-size: 12px;">
+                <input type="checkbox" id="nav-mode-toggle" checked />
+                Auto Navigate on Hover
+            </label>
+
             <span id="layout-info">Force Layout</span>
             <span id="layout-description">Showing all connected functions</span>
         </div>
@@ -315,6 +321,7 @@ export class FlowVisualizer {
         let currentData = null;
         let currentLayout = 'force';
         let scale = 1;
+        let autoNavigate = true;
         let translateX = 0;
         let translateY = 0;
         let isPanning = false;
@@ -335,6 +342,14 @@ export class FlowVisualizer {
                     renderVisualization();
                     break;
             }
+        });
+
+        // Handle auto-navigate toggle
+        document.addEventListener('DOMContentLoaded', () => {
+            const toggle = document.getElementById('nav-mode-toggle');
+            toggle.addEventListener('change', () => {
+                autoNavigate = toggle.checked;
+            });
         });
 
         // Handle window resize
@@ -475,24 +490,24 @@ export class FlowVisualizer {
                 text.textContent = func.name.length > 15 ? func.name.substring(0, 12) + '...' : func.name;
                 nodeG.appendChild(text);
 
-                // Hover: highlight line in code AND switch files if needed
+                // Hover highlight only
                 nodeG.addEventListener('mouseenter', () => {
                     if (!isDraggingNode) {
                         nodeG.classList.add('highlighted');
-                        vscode.postMessage({
-                            command: 'navigateToFunction',
-                            functionName: func.name,
-                            line: func.startLine,
-                            fileName: func.fileName  // CHANGED: Now includes fileName
-                        });
+                        if (autoNavigate) {
+                            vscode.postMessage({
+                                command: 'navigateToFunction',
+                                functionName: func.name,
+                                line: func.startLine,
+                                fileName: func.fileName
+                            });
+                        }
                     }
                 });
 
                 nodeG.addEventListener('mouseleave', () => {
                     nodeG.classList.remove('highlighted');
-                    vscode.postMessage({
-                        command: 'clearHighlight'
-                    })
+                    vscode.postMessage({ command: 'clearHighlight' });
                 });
 
                 // Click: show info panel
@@ -502,6 +517,19 @@ export class FlowVisualizer {
                         showInfo(func);
                     }
                 });
+
+                nodeG.addEventListener('dblclick', (e) => {
+                    e.stopPropagation();
+                    if (!autoNavigate) {
+                        vscode.postMessage({
+                            command: 'navigateToFunction',
+                            functionName: func.name,
+                            line: func.startLine,
+                            fileName: func.fileName
+                        });
+                    }
+                });
+
 
                 // Node dragging - mousedown on node
                 nodeG.addEventListener('mousedown', (e) => {

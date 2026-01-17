@@ -137,7 +137,9 @@ export class CodeAnalyzer {
         // Build calledBy relationships
         for (const [funcName, funcNode] of analysis.functions) {
             for (const calledFunc of funcNode.calls) {
-                const targetFunc = analysis.functions.get(calledFunc);
+                const targetFunc = [...analysis.functions.values()]
+                    .find(f => f.name === calledFunc);
+
                 if (targetFunc) {
                     targetFunc.calledBy.push(funcName);
                 }
@@ -212,7 +214,9 @@ export class CodeAnalyzer {
         // Build calledBy relationships
         for (const [funcName, funcNode] of analysis.functions) {
             for (const calledFunc of funcNode.calls) {
-                const targetFunc = analysis.functions.get(calledFunc);
+                const targetFunc = [...analysis.functions.values()]
+                    .find(f => f.name === calledFunc);
+
                 if (targetFunc) {
                     targetFunc.calledBy.push(funcName);
                 }
@@ -293,7 +297,9 @@ export class CodeAnalyzer {
         // Build calledBy relationships
         for (const [funcName, funcNode] of analysis.functions) {
             for (const calledFunc of funcNode.calls) {
-                const targetFunc = analysis.functions.get(calledFunc);
+                const targetFunc = [...analysis.functions.values()]
+                    .find(f => f.name === calledFunc);
+
                 if (targetFunc) {
                     targetFunc.calledBy.push(funcName);
                 }
@@ -337,11 +343,16 @@ export class CodeAnalyzer {
         for (const analysis of analyses) {
             // Merge functions
             for (const [name, func] of analysis.functions) {
-                const uniqueName = `${name} (${analysis.fileName.split('/').pop()})`;
-                merged.functions.set(uniqueName, { 
+                const baseName = name;
+                const fileLabel = analysis.fileName.split('/').pop() || analysis.fileName;
+
+                // Use a unique key, but DON'T change func.name
+                const uniqueKey = `${baseName}::${fileLabel}`;
+
+                merged.functions.set(uniqueKey, { 
                     ...func, 
-                    name: uniqueName,
-                    fileName: analysis.fileName // Preserve the original file path
+                    name: baseName,          // ✅ clean function name only
+                    fileName: analysis.fileName // full path still stored here
                 });
             }
             
