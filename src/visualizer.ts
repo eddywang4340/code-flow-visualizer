@@ -599,12 +599,75 @@ export class FlowVisualizer {
             const levels = new Map();
             const visited = new Set();
 
-            // Find root nodes (not called by anyone)
-            const roots = functions.filter(f => f.calledBy.length === 0);
+            // Calculate max depth reachable from each node
+            function getMaxDepth(node, depthVisited = new Set()) {
+                if (depthVisited.has(node.name)) return 0;
+                depthVisited.add(node.name);
+                
+                if (node.calls.length === 0) return 0;
+                
+                let maxDepth = 0;
+                node.calls.forEach(calledName => {
+                    const called = functions.find(f => f.name === calledName);
+                    if (called) {
+                        const depth = getMaxDepth(called, new Set(depthVisited));
+                        maxDepth = Math.max(maxDepth, depth + 1);
+                    }
+                });
+                
+                return maxDepth;
+            }
+
+            // Only show nodes that are part of chains with depth >= 2
+            // OR nodes that are important hubs (called by 2+ functions)
+            const meaningfulNodes = new Set();
             
-            // If no roots found, use the first function as root
-            if (roots.length === 0 && functions.length > 0) {
-                roots.push(functions[0]);
+            functions.forEach(func => {
+                const depth = getMaxDepth(func);
+                // Include if: part of deep chain (depth >= 2) OR is a hub (called by 2+ functions)
+                if (depth >= 2 || func.calledBy.length >= 2) {
+                    meaningfulNodes.add(func.name);
+                    // Also include all nodes in the chain from this node
+                    const toVisit = [func];
+                    const chainVisited = new Set();
+                    while (toVisit.length > 0) {
+                        const current = toVisit.pop();
+                        if (chainVisited.has(current.name)) continue;
+                        chainVisited.add(current.name);
+                        meaningfulNodes.add(current.name);
+                        
+                        current.calls.forEach(calledName => {
+                            const called = functions.find(f => f.name === calledName);
+                            if (called && !chainVisited.has(called.name)) {
+                                toVisit.push(called);
+                            }
+                        });
+                    }
+                }
+            });
+
+            // Also include all callers of meaningful nodes
+            functions.forEach(func => {
+                func.calls.forEach(calledName => {
+                    if (meaningfulNodes.has(calledName)) {
+                        meaningfulNodes.add(func.name);
+                    }
+                });
+            });
+
+            // Use meaningful nodes if found, otherwise fall back to any connected nodes
+            const functionsToDisplay = meaningfulNodes.size > 0 
+                ? functions.filter(f => meaningfulNodes.has(f.name))
+                : functions.filter(f => f.calls.length > 0 || f.calledBy.length > 0);
+
+             // Find root nodes (not called by anyone in our display set)
+            const roots = functionsToDisplay.filter(f => 
+                f.calledBy.length === 0 || 
+                !f.calledBy.some(caller => meaningfulNodes.has(caller))
+            );
+            
+            if (roots.length === 0 && functionsToDisplay.length > 0) {
+                roots.push(functionsToDisplay[0]);
             }
             
             // BFS to assign levels
@@ -618,7 +681,7 @@ export class FlowVisualizer {
                 levels.get(level).push(node);
 
                 node.calls.forEach(calledName => {
-                    const called = functions.find(f => f.name === calledName);
+                    const called = functionsToDisplay.find(f => f.name === calledName);
                     if (called) {
                         assignLevels(called, level + 1);
                     }
@@ -627,25 +690,21 @@ export class FlowVisualizer {
 
             roots.forEach(root => assignLevels(root, 0));
 
-            // Handle any unvisited nodes (disconnected from the main graph)
-            const unvisited = functions.filter(f => !visited.has(f.name));
-            if (unvisited.length > 0) {
-                const disconnectedLevel = levels.size > 0 ? Math.max(...levels.keys()) + 1 : 0;
-                if (!levels.has(disconnectedLevel)) {
-                    levels.set(disconnectedLevel, []);
-                }
-                unvisited.forEach(node => {
-                    levels.get(disconnectedLevel).push(node);
-                    visited.add(node.name);
-                });
-            }
+            // Don't show unvisited nodes in hierarchical mode - they're isolated
+            // (This is intentionally removed from hierarchical mode)
 
-            // Initialize all positions
+            // Initialize all positions (including isolated nodes with off-screen positions)
             for (let i = 0; i < functions.length; i++) {
-                positions[i] = { x: 0, y: 0 };
+                const func = functions[i];
+                if (visited.has(func.name)) {
+                    positions[i] = { x: 0, y: 0 }; // Will be set properly below
+                } else {
+                    // Hide isolated nodes by positioning them off-screen
+                    positions[i] = { x: -10000, y: -10000 };
+                }
             }
 
-            // Position nodes
+            // Position only visited (connected) nodes
             const maxLevel = levels.size > 0 ? Math.max(...levels.keys()) : 0;
             levels.forEach((nodes, level) => {
                 const y = maxLevel > 0 ? (level / maxLevel) * (height - 100) + 50 : height / 2;
