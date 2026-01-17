@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 
 export interface FunctionNode {
     name: string;
+    displayName: string; // Add this - clean name for display
     startLine: number;
     endLine: number;
     calls: string[];
@@ -124,13 +125,14 @@ export class CodeAnalyzer {
 
             analysis.functions.set(functionName, {
                 name: functionName,
+                displayName: functionName, // Add this line
                 startLine,
                 endLine,
-                calls: [...new Set(calls)], // Remove duplicates
+                calls: [...new Set(calls)],
                 calledBy: [],
                 params,
                 complexity,
-                fileName: analysis.fileName // Store the file name
+                fileName: analysis.fileName
             });
         }
 
@@ -201,13 +203,14 @@ export class CodeAnalyzer {
 
             analysis.functions.set(functionName, {
                 name: functionName,
+                displayName: functionName, // Add this line
                 startLine,
                 endLine,
                 calls: [...new Set(calls)],
                 calledBy: [],
                 params,
                 complexity,
-                fileName: analysis.fileName // Store the file name
+                fileName: analysis.fileName
             });
         }
 
@@ -284,13 +287,14 @@ export class CodeAnalyzer {
 
             analysis.functions.set(methodName, {
                 name: methodName,
+                displayName: methodName, // Add this line
                 startLine,
                 endLine,
                 calls: [...new Set(calls)],
                 calledBy: [],
                 params,
                 complexity,
-                fileName: analysis.fileName // Store the file name
+                fileName: analysis.fileName
             });
         }
 
@@ -320,6 +324,7 @@ export class CodeAnalyzer {
             
             analysis.functions.set(functionName, {
                 name: functionName,
+                displayName: functionName, // Add this line
                 startLine,
                 endLine: startLine + 10, // Estimate
                 calls: [],
@@ -330,7 +335,6 @@ export class CodeAnalyzer {
             });
         }
     }
-
     mergeAnalyses(analyses: CodeAnalysis[]): CodeAnalysis {
         const merged: CodeAnalysis = {
             fileName: 'Workspace Analysis',
@@ -340,25 +344,67 @@ export class CodeAnalyzer {
             exports: []
         };
 
+        // First pass: add all functions with unique keys
         for (const analysis of analyses) {
-            // Merge functions
+            const fileLabel = analysis.fileName.split('/').pop() || analysis.fileName;
+            
             for (const [name, func] of analysis.functions) {
-                const baseName = name;
-                const fileLabel = analysis.fileName.split('/').pop() || analysis.fileName;
-
-                // Use a unique key, but DON'T change func.name
-                const uniqueKey = `${baseName}::${fileLabel}`;
-
+                const uniqueKey = `${name}::${fileLabel}`;
+                
                 merged.functions.set(uniqueKey, { 
-                    ...func, 
-                    name: baseName,          // ✅ clean function name only
-                    fileName: analysis.fileName // full path still stored here
+                    ...func,
+                    name: uniqueKey,  // Unique identifier
+                    displayName: name, // Original function name for display
+                    fileName: analysis.fileName
                 });
             }
 
             // Merge imports and exports
             merged.imports.push(...analysis.imports);
             merged.exports.push(...analysis.exports);
+        }
+
+        // Second pass: update call relationships to use unique keys
+        for (const analysis of analyses) {
+            const fileLabel = analysis.fileName.split('/').pop() || analysis.fileName;
+            
+            for (const [name, func] of analysis.functions) {
+                const uniqueKey = `${name}::${fileLabel}`;
+                const mergedFunc = merged.functions.get(uniqueKey);
+                
+                if (mergedFunc) {
+                    // Update calls to use unique keys
+                    mergedFunc.calls = func.calls.map(calledName => {
+                        // First try to find in same file
+                        const sameFileKey = `${calledName}::${fileLabel}`;
+                        if (merged.functions.has(sameFileKey)) {
+                            return sameFileKey;
+                        }
+                        
+                        // Otherwise find any function with this base name
+                        for (const [key] of merged.functions) {
+                            if (key.startsWith(calledName + '::')) {
+                                return key;
+                            }
+                        }
+                        
+                        // If not found, return original (might be external)
+                        return calledName;
+                    });
+                    
+                    mergedFunc.calledBy = [];
+                }
+            }
+        }
+
+        // Third pass: rebuild calledBy relationships
+        for (const [funcKey, func] of merged.functions) {
+            for (const calledKey of func.calls) {
+                const calledFunc = merged.functions.get(calledKey);
+                if (calledFunc && !calledFunc.calledBy.includes(funcKey)) {
+                    calledFunc.calledBy.push(funcKey);
+                }
+            }
         }
 
         return merged;

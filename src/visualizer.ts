@@ -692,7 +692,9 @@ export class FlowVisualizer {
                 text.setAttribute('y', positions[i].y - 18);
                 text.setAttribute('text-anchor', 'middle');
                 text.setAttribute('fill', 'var(--vscode-foreground)');
-                text.textContent = func.name.length > 15 ? func.name.substring(0, 12) + '...' : func.name;
+                text.textContent = func.displayName && func.displayName.length > 15 
+                    ? func.displayName.substring(0, 12) + '...' 
+                    : (func.displayName || func.name);
                 nodeG.appendChild(text);
 
                 nodeG.addEventListener('mouseenter', () => {
@@ -1279,10 +1281,11 @@ export class FlowVisualizer {
             const panel = document.getElementById('info-panel');
             panel.innerHTML = \`
                 <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
-                    <h3 style="margin: 0;">\${func.name}</h3>
+                    <h3 style="margin: 0;">\${func.displayName || func.name}</h3>
                     <button onclick="hideInfo()" style="background: transparent; color: var(--vscode-foreground); border: none; cursor: pointer; font-size: 18px; padding: 0; margin: 0; line-height: 1;">×</button>
                 </div>
                 <ul>
+                    <li><strong>File:</strong> \${fileName}</li>
                     <li><strong>Lines:</strong> \${func.startLine} - \${func.endLine}</li>
                     <li><strong>Complexity:</strong> \${func.complexity}</li>
                     <li><strong>Parameters:</strong> \${func.params.length}</li>
