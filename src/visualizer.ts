@@ -36,7 +36,7 @@ export class FlowVisualizer {
             message => {
                 switch (message.command) {
                     case 'navigateToFunction':
-                        this._navigateToFunction(message.functionName, message.line);
+                        this._navigateToFunction(message.functionName, message.line, message.fileName);
                         break;
                     case 'clearHighlight':
                         this._clearHighlight();
@@ -101,8 +101,20 @@ export class FlowVisualizer {
     }
 
 
-    private async _navigateToFunction(functionName: string, line: number): Promise<void> {
-        const editor = vscode.window.activeTextEditor;
+    private async _navigateToFunction(functionName: string, line: number, fileName?: string): Promise<void> {
+        let editor = vscode.window.activeTextEditor;
+        
+        // If fileName is provided and different from current file, open it
+        if (fileName && (!editor || editor.document.fileName !== fileName)) {
+            try {
+                const document = await vscode.workspace.openTextDocument(fileName);
+                editor = await vscode.window.showTextDocument(document, vscode.ViewColumn.One);
+            } catch (error) {
+                vscode.window.showErrorMessage(`Could not open file: ${fileName}`);
+                return;
+            }
+        }
+        
         if (!editor) {
             return;
         }
@@ -165,6 +177,25 @@ export class FlowVisualizer {
             padding: 15px;
             background-color: var(--vscode-editor-inactiveSelectionBackground);
             border-radius: 5px;
+        }
+
+        #layout-info {
+            display: inline-block;
+            margin-left: 20px;
+            padding: 6px 12px;
+            background-color: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        #layout-description {
+            display: block;
+            margin-top: 8px;
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
         }
 
         #canvas {
@@ -270,9 +301,8 @@ export class FlowVisualizer {
             <button onclick="toggleLayout()">Change Layout</button>
             <button onclick="zoomIn()">Zoom In</button>
             <button onclick="zoomOut()">Zoom Out</button>
-            <span style="margin-left: 20px; font-size: 12px;">
-                Drag nodes to rearrange | Hover to highlight | Click for details | Drag background to pan | Scroll to zoom
-            </span>
+            <span id="layout-info">Force Layout</span>
+            <span id="layout-description">Showing all connected functions</span>
         </div>
         <div id="canvas">
             <svg id="main-svg"></svg>
@@ -388,9 +418,12 @@ export class FlowVisualizer {
 
             // Draw links
             functions.forEach((func, i) => {
+                // Skip drawing links from/to hidden nodes
+                if (positions[i].x < -1000) return;
+                
                 func.calls.forEach(calledFunc => {
                     const targetIndex = functions.findIndex(f => f.name === calledFunc);
-                    if (targetIndex !== -1) {
+                    if (targetIndex !== -1 && positions[targetIndex].x > -1000) {
                         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                         line.setAttribute('class', 'link');
                         line.setAttribute('x1', positions[i].x);
@@ -403,8 +436,14 @@ export class FlowVisualizer {
                 });
             });
 
-            // Draw nodes
+            // Draw nodes (skip hidden nodes in hierarchical mode)
+            let visibleCount = 0;
             functions.forEach((func, i) => {
+                // Skip drawing hidden nodes (off-screen in hierarchical mode)
+                if (positions[i].x < -1000) return;
+                
+                visibleCount++;
+                
                 const nodeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
                 nodeG.setAttribute('class', 'node');
                 nodeG.setAttribute('data-function-name', func.name);
@@ -436,14 +475,15 @@ export class FlowVisualizer {
                 text.textContent = func.name.length > 15 ? func.name.substring(0, 12) + '...' : func.name;
                 nodeG.appendChild(text);
 
-                // Hover: highlight line in code
+                // Hover: highlight line in code AND switch files if needed
                 nodeG.addEventListener('mouseenter', () => {
                     if (!isDraggingNode) {
                         nodeG.classList.add('highlighted');
                         vscode.postMessage({
                             command: 'navigateToFunction',
                             functionName: func.name,
-                            line: func.startLine
+                            line: func.startLine,
+                            fileName: func.fileName  // CHANGED: Now includes fileName
                         });
                     }
                 });
@@ -477,6 +517,20 @@ export class FlowVisualizer {
             });
 
             setupInteractions(svg, g);
+            
+            // Update layout description with node count
+            const layoutDesc = document.getElementById('layout-description');
+            if (layoutDesc) {
+                if (currentLayout === 'hierarchical') {
+                    if (visibleCount < functions.length) {
+                        layoutDesc.textContent = 'Showing ' + visibleCount + ' of ' + functions.length + ' functions (deep call chains and hubs only)';
+                    } else {
+                        layoutDesc.textContent = 'Showing only deep call chains (depth ≥ 2) and important hubs';
+                    }
+                } else {
+                    layoutDesc.textContent = 'Showing all ' + visibleCount + ' connected functions';
+                }
+            }
         }
 
         // Update node positions without full re-render
@@ -599,12 +653,75 @@ export class FlowVisualizer {
             const levels = new Map();
             const visited = new Set();
 
-            // Find root nodes (not called by anyone)
-            const roots = functions.filter(f => f.calledBy.length === 0);
+            // Calculate max depth reachable from each node
+            function getMaxDepth(node, depthVisited = new Set()) {
+                if (depthVisited.has(node.name)) return 0;
+                depthVisited.add(node.name);
+                
+                if (node.calls.length === 0) return 0;
+                
+                let maxDepth = 0;
+                node.calls.forEach(calledName => {
+                    const called = functions.find(f => f.name === calledName);
+                    if (called) {
+                        const depth = getMaxDepth(called, new Set(depthVisited));
+                        maxDepth = Math.max(maxDepth, depth + 1);
+                    }
+                });
+                
+                return maxDepth;
+            }
+
+            // Only show nodes that are part of chains with depth >= 2
+            // OR nodes that are important hubs (called by 2+ functions)
+            const meaningfulNodes = new Set();
             
-            // If no roots found, use the first function as root
-            if (roots.length === 0 && functions.length > 0) {
-                roots.push(functions[0]);
+            functions.forEach(func => {
+                const depth = getMaxDepth(func);
+                // Include if: part of deep chain (depth >= 2) OR is a hub (called by 2+ functions)
+                if (depth >= 2 || func.calledBy.length >= 2) {
+                    meaningfulNodes.add(func.name);
+                    // Also include all nodes in the chain from this node
+                    const toVisit = [func];
+                    const chainVisited = new Set();
+                    while (toVisit.length > 0) {
+                        const current = toVisit.pop();
+                        if (chainVisited.has(current.name)) continue;
+                        chainVisited.add(current.name);
+                        meaningfulNodes.add(current.name);
+                        
+                        current.calls.forEach(calledName => {
+                            const called = functions.find(f => f.name === calledName);
+                            if (called && !chainVisited.has(called.name)) {
+                                toVisit.push(called);
+                            }
+                        });
+                    }
+                }
+            });
+
+            // Also include all callers of meaningful nodes
+            functions.forEach(func => {
+                func.calls.forEach(calledName => {
+                    if (meaningfulNodes.has(calledName)) {
+                        meaningfulNodes.add(func.name);
+                    }
+                });
+            });
+
+            // Use meaningful nodes if found, otherwise fall back to any connected nodes
+            const functionsToDisplay = meaningfulNodes.size > 0 
+                ? functions.filter(f => meaningfulNodes.has(f.name))
+                : functions.filter(f => f.calls.length > 0 || f.calledBy.length > 0);
+
+             // Find root nodes (not called by anyone in our display set)
+            const roots = functionsToDisplay.filter(f => 
+                f.calledBy.length === 0 || 
+                !f.calledBy.some(caller => meaningfulNodes.has(caller))
+            );
+            
+            if (roots.length === 0 && functionsToDisplay.length > 0) {
+                roots.push(functionsToDisplay[0]);
             }
             
             // BFS to assign levels
@@ -618,7 +735,7 @@ export class FlowVisualizer {
                 levels.get(level).push(node);
 
                 node.calls.forEach(calledName => {
-                    const called = functions.find(f => f.name === calledName);
+                    const called = functionsToDisplay.find(f => f.name === calledName);
                     if (called) {
                         assignLevels(called, level + 1);
                     }
@@ -627,25 +744,21 @@ export class FlowVisualizer {
 
             roots.forEach(root => assignLevels(root, 0));
 
-            // Handle any unvisited nodes (disconnected from the main graph)
-            const unvisited = functions.filter(f => !visited.has(f.name));
-            if (unvisited.length > 0) {
-                const disconnectedLevel = levels.size > 0 ? Math.max(...levels.keys()) + 1 : 0;
-                if (!levels.has(disconnectedLevel)) {
-                    levels.set(disconnectedLevel, []);
-                }
-                unvisited.forEach(node => {
-                    levels.get(disconnectedLevel).push(node);
-                    visited.add(node.name);
-                });
-            }
+            // Don't show unvisited nodes in hierarchical mode - they're isolated
+            // (This is intentionally removed from hierarchical mode)
 
-            // Initialize all positions
+            // Initialize all positions (including isolated nodes with off-screen positions)
             for (let i = 0; i < functions.length; i++) {
-                positions[i] = { x: 0, y: 0 };
+                const func = functions[i];
+                if (visited.has(func.name)) {
+                    positions[i] = { x: 0, y: 0 }; // Will be set properly below
+                } else {
+                    // Hide isolated nodes by positioning them off-screen
+                    positions[i] = { x: -10000, y: -10000 };
+                }
             }
 
-            // Position nodes
+            // Position only visited (connected) nodes
             const maxLevel = levels.size > 0 ? Math.max(...levels.keys()) : 0;
             levels.forEach((nodes, level) => {
                 const y = maxLevel > 0 ? (level / maxLevel) * (height - 100) + 50 : height / 2;
@@ -791,6 +904,21 @@ export class FlowVisualizer {
         function toggleLayout() {
             currentLayout = currentLayout === 'force' ? 'hierarchical' : 'force';
             nodePositions = []; // Clear stored positions when changing layouts
+            
+            // Update layout info badge and description
+            const layoutInfo = document.getElementById('layout-info');
+            const layoutDesc = document.getElementById('layout-description');
+            
+            if (layoutInfo && layoutDesc) {
+                if (currentLayout === 'hierarchical') {
+                    layoutInfo.textContent = 'Hierarchical Layout';
+                    layoutDesc.textContent = 'Showing only deep call chains (depth ≥ 2) and important hubs';
+                } else {
+                    layoutInfo.textContent = 'Force Layout';
+                    layoutDesc.textContent = 'Showing all connected functions';
+                }
+            }
+            
             renderVisualization();
         }
 

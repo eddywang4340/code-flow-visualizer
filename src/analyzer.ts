@@ -8,6 +8,7 @@ export interface FunctionNode {
     calledBy: string[];
     params: string[];
     complexity: number;
+    fileName: string; // Added to track source file
 }
 
 export interface CodeAnalysis {
@@ -128,7 +129,8 @@ export class CodeAnalyzer {
                 calls: [...new Set(calls)], // Remove duplicates
                 calledBy: [],
                 params,
-                complexity
+                complexity,
+                fileName: analysis.fileName // Store the file name
             });
         }
 
@@ -202,7 +204,8 @@ export class CodeAnalyzer {
                 calls: [...new Set(calls)],
                 calledBy: [],
                 params,
-                complexity
+                complexity,
+                fileName: analysis.fileName // Store the file name
             });
         }
 
@@ -282,7 +285,8 @@ export class CodeAnalyzer {
                 calls: [...new Set(calls)],
                 calledBy: [],
                 params,
-                complexity
+                complexity,
+                fileName: analysis.fileName // Store the file name
             });
         }
 
@@ -315,7 +319,8 @@ export class CodeAnalyzer {
                 calls: [],
                 calledBy: [],
                 params: [],
-                complexity: 0
+                complexity: 0,
+                fileName: analysis.fileName // Store the file name
             });
         }
     }
@@ -333,7 +338,11 @@ export class CodeAnalyzer {
             // Merge functions
             for (const [name, func] of analysis.functions) {
                 const uniqueName = `${name} (${analysis.fileName.split('/').pop()})`;
-                merged.functions.set(uniqueName, { ...func, name: uniqueName });
+                merged.functions.set(uniqueName, { 
+                    ...func, 
+                    name: uniqueName,
+                    fileName: analysis.fileName // Preserve the original file path
+                });
             }
             
             // Merge imports and exports
