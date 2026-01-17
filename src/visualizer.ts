@@ -238,9 +238,9 @@ export class FlowVisualizer {
         }
 
         .node.highlighted {
-            filter: brightness(1.5);
+            filter: brightness(1);
             stroke: var(--vscode-textLink-activeForeground);
-            stroke-width: 3px;
+            stroke-width: 1px;
         }
 
         .node-text {
