@@ -36,7 +36,7 @@ export class FlowVisualizer {
             message => {
                 switch (message.command) {
                     case 'navigateToFunction':
-                        this._navigateToFunction(message.functionName, message.line);
+                        this._navigateToFunction(message.functionName, message.line, message.fileName);
                         break;
                     case 'clearHighlight':
                         this._clearHighlight();
@@ -101,8 +101,20 @@ export class FlowVisualizer {
     }
 
 
-    private async _navigateToFunction(functionName: string, line: number): Promise<void> {
-        const editor = vscode.window.activeTextEditor;
+    private async _navigateToFunction(functionName: string, line: number, fileName?: string): Promise<void> {
+        let editor = vscode.window.activeTextEditor;
+        
+        // If fileName is provided and different from current file, open it
+        if (fileName && (!editor || editor.document.fileName !== fileName)) {
+            try {
+                const document = await vscode.workspace.openTextDocument(fileName);
+                editor = await vscode.window.showTextDocument(document, vscode.ViewColumn.One);
+            } catch (error) {
+                vscode.window.showErrorMessage(`Could not open file: ${fileName}`);
+                return;
+            }
+        }
+        
         if (!editor) {
             return;
         }
@@ -463,14 +475,15 @@ export class FlowVisualizer {
                 text.textContent = func.name.length > 15 ? func.name.substring(0, 12) + '...' : func.name;
                 nodeG.appendChild(text);
 
-                // Hover: highlight line in code
+                // Hover: highlight line in code AND switch files if needed
                 nodeG.addEventListener('mouseenter', () => {
                     if (!isDraggingNode) {
                         nodeG.classList.add('highlighted');
                         vscode.postMessage({
                             command: 'navigateToFunction',
                             functionName: func.name,
-                            line: func.startLine
+                            line: func.startLine,
+                            fileName: func.fileName  // CHANGED: Now includes fileName
                         });
                     }
                 });

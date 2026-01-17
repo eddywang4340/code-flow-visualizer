@@ -11,5 +11,6 @@
 - Investigate whether we can do the vice versa (we click on a function name in the code and that takes us to the respective node in the extension)
 - If there are no nodes to display, it should say something like "No nodes to show"
 - Add info button (how to use the extension)
-    - We need to add insttructions at the beginning
+    - We need to add instructions at the beginning
 - Add loading states (UI stuff) - later thing
+
