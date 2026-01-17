@@ -1,0 +1,65 @@
+{
+  "name": "code-flow-visualizer",
+  "displayName": "Code Flow Visualizer",
+  "description": "Visualize code structure and function call relationships in real-time",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:python",
+    "onLanguage:java"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codeFlowVisualizer.start",
+        "title": "Code Flow: Start Visualization"
+      },
+      {
+        "command": "codeFlowVisualizer.analyzeCurrentFile",
+        "title": "Code Flow: Analyze Current File"
+      },
+      {
+        "command": "codeFlowVisualizer.analyzeWorkspace",
+        "title": "Code Flow: Analyze Entire Workspace"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "codeFlowVisualizer.start",
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "codeFlowVisualizer.analyzeCurrentFile",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "echo 'No linting configured'",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.x",
+    "typescript": "^5.3.0",
+    "@vscode/test-electron": "^2.3.8"
+  }
+}
