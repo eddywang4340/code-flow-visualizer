@@ -6,11 +6,10 @@
         - Potentially switch to use analyze runtime with LLM which can be activated on button press
     - Generate description of the function
     - Cache the resulst of the LLM (unless the code changes)
-- Make sure functions of other files take you to that other file (file navigation functionality)
 - When analyzing workspace, we want to cluster functions of the same files (easier for visual users) - Eddy
+- Make sure functions of other files take you to that other file (file navigation functionality) - Jamie
 - Investigate whether we can do the vice versa (we click on a function name in the code and that takes us to the respective node in the extension)
 - If there are no nodes to display, it should say something like "No nodes to show"
 - Add info button (how to use the extension)
     - We need to add insttructions at the beginning
-- BUG: When you extend the extension window on VS code and then try to pan, the nodes seem to go off the div (the div needs to be dynamically flexible) - Jamie
 - Add loading states (UI stuff) - later thing
