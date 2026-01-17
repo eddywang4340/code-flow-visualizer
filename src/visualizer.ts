@@ -167,6 +167,25 @@ export class FlowVisualizer {
             border-radius: 5px;
         }
 
+        #layout-info {
+            display: inline-block;
+            margin-left: 20px;
+            padding: 6px 12px;
+            background-color: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        #layout-description {
+            display: block;
+            margin-top: 8px;
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+        }
+
         #canvas {
             flex: 1;
             border: 1px solid var(--vscode-panel-border);
@@ -270,9 +289,8 @@ export class FlowVisualizer {
             <button onclick="toggleLayout()">Change Layout</button>
             <button onclick="zoomIn()">Zoom In</button>
             <button onclick="zoomOut()">Zoom Out</button>
-            <span style="margin-left: 20px; font-size: 12px;">
-                Drag nodes to rearrange | Hover to highlight | Click for details | Drag background to pan | Scroll to zoom
-            </span>
+            <span id="layout-info">Force Layout</span>
+            <span id="layout-description">Showing all connected functions</span>
         </div>
         <div id="canvas">
             <svg id="main-svg"></svg>
@@ -388,9 +406,12 @@ export class FlowVisualizer {
 
             // Draw links
             functions.forEach((func, i) => {
+                // Skip drawing links from/to hidden nodes
+                if (positions[i].x < -1000) return;
+                
                 func.calls.forEach(calledFunc => {
                     const targetIndex = functions.findIndex(f => f.name === calledFunc);
-                    if (targetIndex !== -1) {
+                    if (targetIndex !== -1 && positions[targetIndex].x > -1000) {
                         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                         line.setAttribute('class', 'link');
                         line.setAttribute('x1', positions[i].x);
@@ -403,8 +424,14 @@ export class FlowVisualizer {
                 });
             });
 
-            // Draw nodes
+            // Draw nodes (skip hidden nodes in hierarchical mode)
+            let visibleCount = 0;
             functions.forEach((func, i) => {
+                // Skip drawing hidden nodes (off-screen in hierarchical mode)
+                if (positions[i].x < -1000) return;
+                
+                visibleCount++;
+                
                 const nodeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
                 nodeG.setAttribute('class', 'node');
                 nodeG.setAttribute('data-function-name', func.name);
@@ -477,6 +504,20 @@ export class FlowVisualizer {
             });
 
             setupInteractions(svg, g);
+            
+            // Update layout description with node count
+            const layoutDesc = document.getElementById('layout-description');
+            if (layoutDesc) {
+                if (currentLayout === 'hierarchical') {
+                    if (visibleCount < functions.length) {
+                        layoutDesc.textContent = 'Showing ' + visibleCount + ' of ' + functions.length + ' functions (deep call chains and hubs only)';
+                    } else {
+                        layoutDesc.textContent = 'Showing only deep call chains (depth ≥ 2) and important hubs';
+                    }
+                } else {
+                    layoutDesc.textContent = 'Showing all ' + visibleCount + ' connected functions';
+                }
+            }
         }
 
         // Update node positions without full re-render
@@ -850,6 +891,21 @@ export class FlowVisualizer {
         function toggleLayout() {
             currentLayout = currentLayout === 'force' ? 'hierarchical' : 'force';
             nodePositions = []; // Clear stored positions when changing layouts
+            
+            // Update layout info badge and description
+            const layoutInfo = document.getElementById('layout-info');
+            const layoutDesc = document.getElementById('layout-description');
+            
+            if (layoutInfo && layoutDesc) {
+                if (currentLayout === 'hierarchical') {
+                    layoutInfo.textContent = 'Hierarchical Layout';
+                    layoutDesc.textContent = 'Showing only deep call chains (depth ≥ 2) and important hubs';
+                } else {
+                    layoutInfo.textContent = 'Force Layout';
+                    layoutDesc.textContent = 'Showing all connected functions';
+                }
+            }
+            
             renderVisualization();
         }
 
