@@ -147,32 +147,37 @@ export class FlowVisualizer {
             color: var(--vscode-foreground);
             background-color: var(--vscode-editor-background);
             padding: 20px;
-            overflow-x: hidden;
+            overflow: hidden;
+            height: 100vh;
         }
 
         #container {
             width: 100%;
-            height: 100vh;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
             position: relative;
         }
 
-        #canvas {
-            width: 100%;
-            height: calc(100vh - 100px);
-            border: 1px solid var(--vscode-panel-border);
-            background-color: var(--vscode-editor-background);
-            cursor: grab;
-        }
-
-        #canvas.panning {
-            cursor: grabbing;
-        }
-
         #controls {
+            flex-shrink: 0;
             margin-bottom: 20px;
             padding: 15px;
             background-color: var(--vscode-editor-inactiveSelectionBackground);
             border-radius: 5px;
+        }
+
+        #canvas {
+            flex: 1;
+            border: 1px solid var(--vscode-panel-border);
+            background-color: var(--vscode-editor-background);
+            cursor: grab;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #canvas.panning {
+            cursor: grabbing;
         }
 
         button {
@@ -259,17 +264,19 @@ export class FlowVisualizer {
     </style>
 </head>
 <body>
-    <div id="controls">
-        <button onclick="resetView()">Reset View</button>
-        <button onclick="toggleLayout()">Change Layout</button>
-        <button onclick="zoomIn()">Zoom In</button>
-        <button onclick="zoomOut()">Zoom Out</button>
-        <span style="margin-left: 20px; font-size: 12px;">
-            Drag nodes to rearrange | Hover to highlight | Click for details | Drag background to pan | Scroll to zoom
-        </span>
-    </div>
     <div id="container">
-        <svg id="canvas"></svg>
+        <div id="controls">
+            <button onclick="resetView()">Reset View</button>
+            <button onclick="toggleLayout()">Change Layout</button>
+            <button onclick="zoomIn()">Zoom In</button>
+            <button onclick="zoomOut()">Zoom Out</button>
+            <span style="margin-left: 20px; font-size: 12px;">
+                Drag nodes to rearrange | Hover to highlight | Click for details | Drag background to pan | Scroll to zoom
+            </span>
+        </div>
+        <div id="canvas">
+            <svg id="main-svg"></svg>
+        </div>
         <div id="info-panel" class="info-panel"></div>
     </div>
 
@@ -300,6 +307,27 @@ export class FlowVisualizer {
             }
         });
 
+        // Handle window resize
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            // Debounce resize to avoid too many re-renders
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                updateSVGDimensions();
+            }, 150);
+        });
+
+        function updateSVGDimensions() {
+            const svg = document.getElementById('main-svg');
+            const canvas = document.getElementById('canvas');
+            
+            if (!svg || !canvas) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            svg.setAttribute('width', rect.width);
+            svg.setAttribute('height', rect.height);
+        }
+
         function renderVisualization() {
             if (!currentData) {
                 return;
@@ -310,14 +338,11 @@ export class FlowVisualizer {
             const width = rect.width;
             const height = rect.height;
 
-            canvas.innerHTML = '';
-
-            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            // Clear existing content
+            const svg = document.getElementById('main-svg');
+            svg.innerHTML = '';
             svg.setAttribute('width', width);
             svg.setAttribute('height', height);
-            svg.setAttribute('id', 'main-svg');
-            svg.style.pointerEvents = 'all'; // Ensure SVG receives events
-            canvas.appendChild(svg);
 
             svgElement = svg;
 
