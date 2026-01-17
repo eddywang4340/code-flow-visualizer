@@ -1,4 +1,9 @@
 import * as vscode from 'vscode';
+// specific import syntax for C++ native modules in TS often requires 'require' or specific config
+import Parser = require('tree-sitter'); 
+import JavaScript = require('tree-sitter-javascript');
+import Python = require('tree-sitter-python');
+import Java = require('tree-sitter-java');
 
 export interface FunctionNode {
     name: string;
@@ -8,7 +13,7 @@ export interface FunctionNode {
     calledBy: string[];
     params: string[];
     complexity: number;
-    fileName: string; // Added to track source file
+    fileName: string;
 }
 
 export interface CodeAnalysis {
@@ -20,11 +25,38 @@ export interface CodeAnalysis {
 }
 
 export class CodeAnalyzer {
+
+    // Cache parsers to avoid re-instantiation
+    private jsParser: Parser;
+    private pyParser: Parser;
+    private javaParser: Parser;
+
+    constructor() {
+        this.jsParser = new Parser();
+        this.jsParser.setLanguage(JavaScript as any);
+
+        this.pyParser = new Parser();
+        this.pyParser.setLanguage(Python as any);
+
+        this.javaParser = new Parser();
+        this.javaParser.setLanguage(Java as any);
+    }
     
+    /**
+     * Complexity node types to count for Cyclomatic Complexity.
+     */
+    private readonly complexityNodeTypes = new Set([
+        'if_statement', 'for_statement', 'while_statement', 'do_statement',
+        'switch_case', 'case_statement', 'catch_clause', 
+        'binary_expression', // for && and ||
+        'conditional_expression', // ternary
+        'elif_clause', 'except_clause', 'for_in_statement'
+    ]);
+
     async analyzeDocument(document: vscode.TextDocument): Promise<CodeAnalysis> {
         const language = document.languageId;
-        const text = document.getText();
         const fileName = document.fileName;
+        const text = document.getText();
 
         const analysis: CodeAnalysis = {
             fileName,
@@ -34,263 +66,239 @@ export class CodeAnalyzer {
             exports: []
         };
 
-        switch (language) {
-            case 'javascript':
-            case 'typescript':
-                this.analyzeJavaScript(text, analysis);
-                break;
-            case 'python':
-                this.analyzePython(text, analysis);
-                break;
-            case 'java':
-                this.analyzeJava(text, analysis);
-                break;
-            default:
-                this.analyzeGeneric(text, analysis);
+        try {
+            let tree: Parser.Tree | undefined;
+
+            switch (language) {
+                case 'javascript':
+                case 'typescript':
+                case 'typescriptreact': // basic JS parsing usually works for simple TS/React structures
+                case 'javascriptreact':
+                    tree = this.jsParser.parse(text);
+                    this.analyzeJsTsTree(tree, analysis);
+                    break;
+                case 'python':
+                    tree = this.pyParser.parse(text);
+                    this.analyzePythonTree(tree, analysis);
+                    break;
+                case 'java':
+                    tree = this.javaParser.parse(text);
+                    this.analyzeJavaTree(tree, analysis);
+                    break;
+                default:
+                    this.analyzeGeneric(text, analysis);
+            }
+
+            // Note: Native tree-sitter trees don't always need manual deletion like WASM, 
+            // but it's good practice if the API exposes it. The Node GC usually handles it.
+
+        } catch (e) {
+            console.error('Tree-sitter analysis failed, falling back to regex:', e);
+            this.analyzeGeneric(text, analysis);
         }
+
+        // Post-processing: Build calledBy relationships
+        this.buildReverseDependencies(analysis);
 
         return analysis;
     }
 
-    private analyzeJavaScript(text: string, analysis: CodeAnalysis): void {
-        const lines = text.split('\n');
-        
-        // Find imports
-        const importRegex = /import\s+.*\s+from\s+['"]([^'"]+)['"]/g;
-        let match;
-        while ((match = importRegex.exec(text)) !== null) {
-            analysis.imports.push(match[1]);
-        }
+    // =========================================================================
+    // Language Specific Analyzers
+    // =========================================================================
 
-        // Find exports
-        const exportRegex = /export\s+(function|class|const|let|var)\s+(\w+)/g;
-        while ((match = exportRegex.exec(text)) !== null) {
-            analysis.exports.push(match[2]);
-        }
-
-        // Find functions
-        const functionRegex = /(?:function\s+(\w+)|const\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|(\w+)\s*:\s*(?:async\s*)?\([^)]*\)\s*=>)/g;
-        
-        while ((match = functionRegex.exec(text)) !== null) {
-            const functionName = match[1] || match[2] || match[3];
-            if (!functionName) continue;
-
-            const startIndex = match.index;
-            const startLine = text.substring(0, startIndex).split('\n').length - 1;
+    private analyzeJsTsTree(tree: Parser.Tree, analysis: CodeAnalysis): void {
+        const traverseRoot = (node: Parser.SyntaxNode) => {
+            // Imports
+            if (node.type === 'import_statement') {
+                const source = node.childForFieldName('source');
+                if (source) analysis.imports.push(source.text.replace(/['"]/g, ''));
+            } 
+            // Exports
+            else if (node.type === 'export_statement') {
+                analysis.exports.push('export'); 
+            }
             
-            // Find function end (simplified - looks for closing brace)
-            let braceCount = 0;
-            let foundStart = false;
-            let endLine = startLine;
-            
-            for (let i = startLine; i < lines.length; i++) {
-                const line = lines[i];
-                for (const char of line) {
-                    if (char === '{') {
-                        braceCount++;
-                        foundStart = true;
-                    } else if (char === '}') {
-                        braceCount--;
-                        if (foundStart && braceCount === 0) {
-                            endLine = i;
-                            break;
+            // Function Detection
+            let funcName = '';
+            let funcNode = node;
+            let isFunction = false;
+
+            if (node.type === 'function_declaration' || node.type === 'generator_function') {
+                const nameNode = node.childForFieldName('name');
+                if (nameNode) {
+                    funcName = nameNode.text;
+                    isFunction = true;
+                }
+            }
+            else if (node.type === 'method_definition') {
+                const nameNode = node.childForFieldName('name');
+                if (nameNode) {
+                    funcName = nameNode.text;
+                    isFunction = true;
+                }
+            }
+            else if (node.type === 'lexical_declaration' || node.type === 'variable_declaration') {
+                for (const child of node.children) {
+                    if (child.type === 'variable_declarator') {
+                        const name = child.childForFieldName('name');
+                        const value = child.childForFieldName('value');
+                        if (name && value && (value.type === 'arrow_function' || value.type === 'function_expression')) {
+                            funcName = name.text;
+                            funcNode = value; 
+                            isFunction = true;
                         }
                     }
                 }
-                if (foundStart && braceCount === 0) break;
             }
 
-            // Extract function body
-            const functionBody = lines.slice(startLine, endLine + 1).join('\n');
-            
-            // Find function calls within this function
-            const callRegex = /(\w+)\s*\(/g;
-            const calls: string[] = [];
-            let callMatch;
-            while ((callMatch = callRegex.exec(functionBody)) !== null) {
-                const calledFunction = callMatch[1];
-                if (calledFunction !== functionName && 
-                    !['if', 'for', 'while', 'switch', 'catch'].includes(calledFunction)) {
-                    calls.push(calledFunction);
-                }
+            if (isFunction && funcName) {
+                this.processFunctionNode(funcName, funcNode, analysis);
             }
 
-            // Calculate basic complexity (number of decision points)
-            const complexity = (functionBody.match(/\b(if|for|while|case|catch|&&|\|\|)\b/g) || []).length;
-
-            // Extract parameters
-            const paramMatch = text.substring(startIndex).match(/\(([^)]*)\)/);
-            const params = paramMatch ? paramMatch[1].split(',').map(p => p.trim()).filter(p => p) : [];
-
-            analysis.functions.set(functionName, {
-                name: functionName,
-                startLine,
-                endLine,
-                calls: [...new Set(calls)], // Remove duplicates
-                calledBy: [],
-                params,
-                complexity,
-                fileName: analysis.fileName // Store the file name
-            });
-        }
-
-        // Build calledBy relationships
-        for (const [funcName, funcNode] of analysis.functions) {
-            for (const calledFunc of funcNode.calls) {
-                const targetFunc = analysis.functions.get(calledFunc);
-                if (targetFunc) {
-                    targetFunc.calledBy.push(funcName);
-                }
+            // Recurse
+            // If we found a function, we processed its body in processFunctionNode.
+            // However, we might have nested functions, so we should continue traversal 
+            // unless processFunctionNode handled the recursion logic (it doesn't recursively find definitions).
+            // NOTE: The simple traversal here might re-visit children. 
+            // For efficiency, you might skip traversing into funcNode if you don't want nested functions.
+            // But usually, we DO want nested functions.
+            for (const child of node.children) {
+                traverseRoot(child);
             }
-        }
+        };
+
+        traverseRoot(tree.rootNode);
     }
 
-    private analyzePython(text: string, analysis: CodeAnalysis): void {
-        const lines = text.split('\n');
-        
-        // Find imports
-        const importRegex = /(?:from\s+(\S+)\s+)?import\s+(.+)/g;
-        let match;
-        while ((match = importRegex.exec(text)) !== null) {
-            analysis.imports.push(match[1] || match[2]);
-        }
-
-        // Find functions
-        const functionRegex = /def\s+(\w+)\s*\(([^)]*)\)/g;
-        
-        while ((match = functionRegex.exec(text)) !== null) {
-            const functionName = match[1];
-            const params = match[2].split(',').map(p => p.trim()).filter(p => p);
-            
-            const startIndex = match.index;
-            const startLine = text.substring(0, startIndex).split('\n').length - 1;
-            
-            // Find function end (based on indentation)
-            let endLine = startLine;
-            const baseIndent = lines[startLine].search(/\S/);
-            
-            for (let i = startLine + 1; i < lines.length; i++) {
-                const line = lines[i].trim();
-                if (line === '') continue;
-                
-                const currentIndent = lines[i].search(/\S/);
-                if (currentIndent <= baseIndent && line !== '') {
-                    endLine = i - 1;
-                    break;
-                }
-                endLine = i;
+    private analyzePythonTree(tree: Parser.Tree, analysis: CodeAnalysis): void {
+        const traverse = (node: Parser.SyntaxNode) => {
+            if (node.type === 'import_statement') {
+                analysis.imports.push(node.text);
+            } else if (node.type === 'import_from_statement') {
+                const module = node.childForFieldName('module_name');
+                if (module) analysis.imports.push(module.text);
             }
 
-            const functionBody = lines.slice(startLine, endLine + 1).join('\n');
-            
-            // Find function calls
-            const callRegex = /(\w+)\s*\(/g;
-            const calls: string[] = [];
-            let callMatch;
-            while ((callMatch = callRegex.exec(functionBody)) !== null) {
-                const calledFunction = callMatch[1];
-                if (calledFunction !== functionName && 
-                    !['if', 'for', 'while', 'print', 'len', 'range'].includes(calledFunction)) {
-                    calls.push(calledFunction);
+            if (node.type === 'function_definition') {
+                const nameNode = node.childForFieldName('name');
+                if (nameNode) {
+                    this.processFunctionNode(nameNode.text, node, analysis);
                 }
             }
 
-            const complexity = (functionBody.match(/\b(if|for|while|elif|except|and|or)\b/g) || []).length;
+            for (const child of node.children) traverse(child);
+        };
 
-            analysis.functions.set(functionName, {
-                name: functionName,
-                startLine,
-                endLine,
-                calls: [...new Set(calls)],
-                calledBy: [],
-                params,
-                complexity,
-                fileName: analysis.fileName // Store the file name
-            });
-        }
-
-        // Build calledBy relationships
-        for (const [funcName, funcNode] of analysis.functions) {
-            for (const calledFunc of funcNode.calls) {
-                const targetFunc = analysis.functions.get(calledFunc);
-                if (targetFunc) {
-                    targetFunc.calledBy.push(funcName);
-                }
-            }
-        }
+        traverse(tree.rootNode);
     }
 
-    private analyzeJava(text: string, analysis: CodeAnalysis): void {
-        const lines = text.split('\n');
-        
-        // Find imports
-        const importRegex = /import\s+([^;]+);/g;
-        let match;
-        while ((match = importRegex.exec(text)) !== null) {
-            analysis.imports.push(match[1]);
+    private analyzeJavaTree(tree: Parser.Tree, analysis: CodeAnalysis): void {
+        const traverse = (node: Parser.SyntaxNode) => {
+            if (node.type === 'import_declaration') {
+                analysis.imports.push(node.text.replace('import', '').replace(';', '').trim());
+            }
+
+            if (node.type === 'method_declaration' || node.type === 'constructor_declaration') {
+                const nameNode = node.childForFieldName('name');
+                if (nameNode) {
+                    this.processFunctionNode(nameNode.text, node, analysis);
+                }
+            }
+
+            for (const child of node.children) traverse(child);
+        };
+
+        traverse(tree.rootNode);
+    }
+
+    // =========================================================================
+    // Core Logic (Node Processing)
+    // =========================================================================
+
+    private processFunctionNode(name: string, node: Parser.SyntaxNode, analysis: CodeAnalysis) {
+        const startLine = node.startPosition.row;
+        const endLine = node.endPosition.row;
+
+        // Parameters
+        const params: string[] = [];
+        const paramNode = node.childForFieldName('parameters');
+        if (paramNode) {
+            const extractParams = (pNode: Parser.SyntaxNode) => {
+                if (pNode.type === 'identifier' || pNode.type === 'property_identifier') {
+                    params.push(pNode.text);
+                }
+                for (const child of pNode.children) extractParams(child);
+            };
+            extractParams(paramNode);
         }
 
-        // Find methods
-        const methodRegex = /(?:public|private|protected)?\s*(?:static)?\s*\w+\s+(\w+)\s*\(([^)]*)\)/g;
+        // Body Analysis
+        const calls = new Set<string>();
+        let complexity = 1;
+
+        const bodyNode = node.childForFieldName('body');
         
-        while ((match = methodRegex.exec(text)) !== null) {
-            const methodName = match[1];
-            if (['if', 'for', 'while', 'switch', 'catch'].includes(methodName)) continue;
-            
-            const params = match[2].split(',').map(p => p.trim()).filter(p => p);
-            const startIndex = match.index;
-            const startLine = text.substring(0, startIndex).split('\n').length - 1;
-            
-            // Find method end
-            let braceCount = 0;
-            let foundStart = false;
-            let endLine = startLine;
-            
-            for (let i = startLine; i < lines.length; i++) {
-                const line = lines[i];
-                for (const char of line) {
-                    if (char === '{') {
-                        braceCount++;
-                        foundStart = true;
-                    } else if (char === '}') {
-                        braceCount--;
-                        if (foundStart && braceCount === 0) {
-                            endLine = i;
-                            break;
+        if (bodyNode) {
+            const traverseBody = (n: Parser.SyntaxNode) => {
+                // Complexity
+                if (this.complexityNodeTypes.has(n.type)) {
+                    if (n.type === 'binary_expression') {
+                        if (['&&', '||', 'and', 'or'].includes(n.children[1]?.text)) {
+                            complexity++;
                         }
+                    } else {
+                        complexity++;
                     }
                 }
-                if (foundStart && braceCount === 0) break;
-            }
 
-            const methodBody = lines.slice(startLine, endLine + 1).join('\n');
-            
-            const callRegex = /(\w+)\s*\(/g;
-            const calls: string[] = [];
-            let callMatch;
-            while ((callMatch = callRegex.exec(methodBody)) !== null) {
-                const calledMethod = callMatch[1];
-                if (calledMethod !== methodName && 
-                    !['if', 'for', 'while', 'switch', 'catch'].includes(calledMethod)) {
-                    calls.push(calledMethod);
+                // Function Calls
+                if (n.type === 'call_expression' || n.type === 'method_invocation') {
+                    let calleeName = '';
+                    
+                    const funcChild = n.childForFieldName('function'); // JS/Py
+                    const nameChild = n.childForFieldName('name'); // Java
+
+                    if (funcChild) {
+                        if (funcChild.type === 'member_expression' || funcChild.type === 'attribute') {
+                            // obj.method -> method
+                             calleeName = funcChild.lastChild?.text || funcChild.text;
+                        } else {
+                             calleeName = funcChild.text;
+                        }
+                    } else if (nameChild) {
+                        calleeName = nameChild.text;
+                    }
+
+                    if (calleeName && calleeName !== name) {
+                        calls.add(calleeName);
+                    }
                 }
-            }
 
-            const complexity = (methodBody.match(/\b(if|for|while|case|catch|&&|\|\|)\b/g) || []).length;
+                for (const child of n.children) traverseBody(child);
+            };
 
-            analysis.functions.set(methodName, {
-                name: methodName,
-                startLine,
-                endLine,
-                calls: [...new Set(calls)],
-                calledBy: [],
-                params,
-                complexity,
-                fileName: analysis.fileName // Store the file name
-            });
+            traverseBody(bodyNode);
         }
 
-        // Build calledBy relationships
+        analysis.functions.set(name, {
+            name,
+            startLine,
+            endLine,
+            calls: Array.from(calls).filter(c => !this.isKeyword(c)),
+            calledBy: [],
+            params,
+            complexity,
+            fileName: analysis.fileName
+        });
+    }
+
+    private isKeyword(name: string): boolean {
+        const commonKeywords = ['if', 'for', 'while', 'switch', 'catch', 'print', 'console.log', 'super'];
+        return commonKeywords.some(k => name.includes(k));
+    }
+
+    private buildReverseDependencies(analysis: CodeAnalysis) {
         for (const [funcName, funcNode] of analysis.functions) {
             for (const calledFunc of funcNode.calls) {
                 const targetFunc = analysis.functions.get(calledFunc);
@@ -302,7 +310,8 @@ export class CodeAnalyzer {
     }
 
     private analyzeGeneric(text: string, analysis: CodeAnalysis): void {
-        // Basic pattern matching for unknown languages
+        // Fallback regex implementation
+        /*
         const functionRegex = /function\s+(\w+)|def\s+(\w+)|(\w+)\s*\([^)]*\)\s*{/g;
         let match;
         
@@ -315,14 +324,14 @@ export class CodeAnalyzer {
             analysis.functions.set(functionName, {
                 name: functionName,
                 startLine,
-                endLine: startLine + 10, // Estimate
+                endLine: startLine + 10,
                 calls: [],
                 calledBy: [],
                 params: [],
-                complexity: 0,
-                fileName: analysis.fileName // Store the file name
+                complexity: 1,
+                fileName: analysis.fileName
             });
-        }
+        }*/
     }
 
     mergeAnalyses(analyses: CodeAnalysis[]): CodeAnalysis {
@@ -335,17 +344,15 @@ export class CodeAnalyzer {
         };
 
         for (const analysis of analyses) {
-            // Merge functions
             for (const [name, func] of analysis.functions) {
-                const uniqueName = `${name} (${analysis.fileName.split('/').pop()})`;
+                // Ensure unique names across files for the visualizer
+                const uniqueName = `${name} (${analysis.fileName.split(/[\\/]/).pop()})`;
                 merged.functions.set(uniqueName, { 
                     ...func, 
                     name: uniqueName,
-                    fileName: analysis.fileName // Preserve the original file path
+                    fileName: analysis.fileName 
                 });
             }
-            
-            // Merge imports and exports
             merged.imports.push(...analysis.imports);
             merged.exports.push(...analysis.exports);
         }
