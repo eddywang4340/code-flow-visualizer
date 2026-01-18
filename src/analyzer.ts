@@ -192,8 +192,7 @@ export class CodeAnalyzer {
             calledBy: [],
             params,
             complexity,
-            fileName: analysis.fileName,
-            code: node.text // <--- ADDED THIS: captures the source code
+            fileName: analysis.fileName
         });
     }
 
@@ -254,8 +253,7 @@ export class CodeAnalyzer {
             calledBy: [],
             params,
             complexity,
-            fileName: analysis.fileName,
-            code: node.text // <--- ADDED THIS
+            fileName: analysis.fileName
         });
     }
 
@@ -309,8 +307,7 @@ export class CodeAnalyzer {
             calledBy: [],
             params,
             complexity,
-            fileName: analysis.fileName,
-            code: node.text // <--- ADDED THIS
+            fileName: analysis.fileName
         });
     }
 
@@ -381,7 +378,22 @@ export class CodeAnalyzer {
         const jsKeywords = ['if', 'for', 'while', 'switch', 'catch'];
 
         const traverse = (node: Parser.SyntaxNode) => {
+            // Calculate complexity\\
+            /*
+            if (this.complexityNodeTypes.has(node.type)) {
+                complexity++;
+            }
+
+            // Check for logical operators (&&, ||, and, or)
+            if (node.type === 'binary_expression') {
+                const operator = node.children[1]?.text;
+                if (['&&', '||', 'and', 'or'].includes(operator)) {
+                    complexity++;
+                }
+            }*/
+
             // Extract function/method calls
+            // Python uses 'call', JavaScript uses 'call_expression', Java uses 'method_invocation'
             if (node.type === 'call_expression' || node.type === 'call' || node.type === 'method_invocation') {
                 let calleeName = '';
 
@@ -389,18 +401,21 @@ export class CodeAnalyzer {
                 const nameNode = node.childForFieldName('name');
 
                 if (funcNode) {
+                    // Handle member expressions (obj.method) or attribute access (obj.method in Python)
                     if (funcNode.type === 'member_expression' || funcNode.type === 'attribute') {
                         const propertyNode = funcNode.childForFieldName('property') || funcNode.childForFieldName('attribute');
                         calleeName = propertyNode?.text || '';
                     } else if (funcNode.type === 'identifier') {
                         calleeName = funcNode.text;
                     } else {
+                        // Fallback - just get the text
                         calleeName = funcNode.text;
                     }
                 } else if (nameNode) {
                     calleeName = nameNode.text;
                 }
 
+                // Filter out current function and keywords only
                 if (calleeName && 
                     calleeName !== functionName && 
                     !(isPython ? pythonKeywords : jsKeywords).includes(calleeName)) {
@@ -408,6 +423,7 @@ export class CodeAnalyzer {
                 }
             }
 
+            // Recurse through children
             for (const child of node.children) {
                 traverse(child);
             }
@@ -418,6 +434,7 @@ export class CodeAnalyzer {
     }
 
     private buildCalledByRelationships(analysis: CodeAnalysis): void {
+        // Convert to array to avoid issues with iterating while modifying
         const allFunctions = Array.from(analysis.functions.values());
         
         console.log(`Building relationships for ${allFunctions.length} functions`);
@@ -441,6 +458,7 @@ export class CodeAnalyzer {
     }
 
     private analyzeGeneric(text: string, analysis: CodeAnalysis): void {
+        // Fallback for unsupported languages - minimal implementation
         const functionRegex = /function\s+(\w+)|def\s+(\w+)|(\w+)\s*\([^)]*\)\s*{/g;
         let match;
 
@@ -474,24 +492,27 @@ export class CodeAnalyzer {
             exports: []
         };
 
+        // First pass: add all functions with unique keys
         for (const analysis of analyses) {
-            const fileLabel = analysis.fileName.split(/[/\\]/).pop() || analysis.fileName;
+            const fileLabel = analysis.fileName.split('/').pop() || analysis.fileName;
 
             for (const [name, func] of analysis.functions) {
                 const uniqueKey = `${name}::${fileLabel}`;
 
                 merged.functions.set(uniqueKey, {
                     ...func,
-                    name: uniqueKey,  
-                    displayName: name, 
+                    name: uniqueKey,  // Unique identifier
+                    displayName: name, // Original function name for display
                     fileName: analysis.fileName
                 });
             }
 
+            // Merge imports and exports
             merged.imports.push(...analysis.imports);
             merged.exports.push(...analysis.exports);
         }
 
+        // Second pass: update call relationships to use unique keys
         for (const analysis of analyses) {
             const fileLabel = analysis.fileName.split('/').pop() || analysis.fileName;
 
@@ -500,18 +521,22 @@ export class CodeAnalyzer {
                 const mergedFunc = merged.functions.get(uniqueKey);
 
                 if (mergedFunc) {
+                    // Update calls to use unique keys
                     mergedFunc.calls = func.calls.map(calledName => {
+                        // First try to find in same file
                         const sameFileKey = `${calledName}::${fileLabel}`;
                         if (merged.functions.has(sameFileKey)) {
                             return sameFileKey;
                         }
 
+                        // Otherwise find any function with this base name
                         for (const [key] of merged.functions) {
                             if (key.startsWith(calledName + '::')) {
                                 return key;
                             }
                         }
 
+                        // If not found, return original (might be external)
                         return calledName;
                     });
 
@@ -520,6 +545,7 @@ export class CodeAnalyzer {
             }
         }
 
+        // Third pass: rebuild calledBy relationships
         for (const [funcKey, func] of merged.functions) {
             for (const calledKey of func.calls) {
                 const calledFunc = merged.functions.get(calledKey);
