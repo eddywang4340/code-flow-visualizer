@@ -1399,11 +1399,13 @@ export class FlowVisualizer {
                     const wasBelow = oldScale <= ZOOM_THRESHOLD;
                     const isAbove = scale > ZOOM_THRESHOLD;
                     
-                    if (wasBelow && isAbove) {
-                        expandedFiles.clear();
-                        renderVisualization();
-                    } else if (!wasBelow && !isAbove && expandedFiles.size === 0) {
-                        renderVisualization();
+                    if (expandedFiles.size === 0) {
+                        if (wasBelow && isAbove) {
+                            expandedFiles.clear();
+                            renderVisualization();
+                        } else if (!wasBelow && !isAbove) {
+                            renderVisualization();
+                        }
                     }
                 }
                 
@@ -1446,12 +1448,11 @@ export class FlowVisualizer {
             }
 
             // Check threshold crossing
-            if (isWorkspaceMode && currentLayout === 'force') {
+            if (isWorkspaceMode && currentLayout === 'force' && expandedFiles.size === 0) {
                 const wasBelow = oldScale <= ZOOM_THRESHOLD;
                 const isAbove = scale > ZOOM_THRESHOLD;
                 
                 if (wasBelow && isAbove) {
-                    expandedFiles.clear();
                     renderVisualization();
                 }
             }
@@ -1467,11 +1468,11 @@ export class FlowVisualizer {
             }
 
             // Check threshold crossing
-            if (isWorkspaceMode && currentLayout === 'force') {
+            if (isWorkspaceMode && currentLayout === 'force' && expandedFiles.size === 0) {
                 const wasAbove = oldScale > ZOOM_THRESHOLD;
                 const isBelow = scale <= ZOOM_THRESHOLD;
                 
-                if (wasAbove && isBelow && expandedFiles.size === 0) {
+                if (wasAbove && isBelow) {
                     renderVisualization();
                 }
             }
