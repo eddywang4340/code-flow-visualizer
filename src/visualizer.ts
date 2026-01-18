@@ -601,7 +601,6 @@ export class FlowVisualizer {
                 // IMPROVED: Extract and truncate filename intelligently
                 const fileNameOnly = fileName.split('\\\\').at(-1);
                 let displayName = fileNameOnly;
-                console.logIdispla
                 if (displayName.length > 28) {  
                     const ext = displayName.split('.').pop();
                     const nameWithoutExt = displayName.substring(0, displayName.lastIndexOf('.'));
