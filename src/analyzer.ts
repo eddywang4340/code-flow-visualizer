@@ -284,14 +284,15 @@ export class CodeAnalyzer {
 
         analysis.functions.set(name, {
             name,
+            displayName: name,
             startLine,
             endLine,
-            calls: Array.from(calls).filter(c => !this.isKeyword(c)),
+            calls: Array.from(calls),
             calledBy: [],
             params,
             complexity,
             fileName: analysis.fileName
-        });
+     });
     }
 
     private isKeyword(name: string): boolean {
