@@ -405,6 +405,51 @@ export class FlowVisualizer {
             }, 150);
         });
 
+        function updateLinkVisibility() {
+            const canvas = document.getElementById('canvas');
+            if (!canvas || !gElement) return;
+
+            // Get current screen dimensions
+            const rect = canvas.getBoundingClientRect();
+            const screenW = rect.width;
+            const screenH = rect.height;
+
+            const links = gElement.querySelectorAll('.link');
+            
+            links.forEach(line => {
+                // Get the source/target indices we saved earlier
+                const sourceIdx = parseInt(line.getAttribute('data-source-index'));
+                const targetIdx = parseInt(line.getAttribute('data-target-index'));
+
+                if (!isNaN(sourceIdx) && !isNaN(targetIdx)) {
+                    const sourcePos = nodePositions[sourceIdx];
+                    const targetPos = nodePositions[targetIdx];
+
+                    if (sourcePos && targetPos) {
+                        // Calculate actual screen coordinates based on current Pan/Zoom
+                        // Formula: (NodePos * Scale) + Translate
+                        const sX = sourcePos.x * scale + translateX;
+                        const sY = sourcePos.y * scale + translateY;
+                        const tX = targetPos.x * scale + translateX;
+                        const tY = targetPos.y * scale + translateY;
+
+                        // Check if Source is on screen
+                        const sourceVisible = sX >= 0 && sX <= screenW && sY >= 0 && sY <= screenH;
+                        
+                        // Check if Target is on screen
+                        const targetVisible = tX >= 0 && tX <= screenW && tY >= 0 && tY <= screenH;
+
+                        // USER REQUIREMENT: Only show if BOTH nodes are present on screen
+                        if (sourceVisible && targetVisible) {
+                            line.style.display = 'block';
+                        } else {
+                            line.style.display = 'none';
+                        }
+                    }
+                }
+            });
+        }
+
         function updateSVGDimensions() {
             const svg = document.getElementById('main-svg');
             const canvas = document.getElementById('canvas');
@@ -496,6 +541,7 @@ export class FlowVisualizer {
             }
 
             updateLayoutDescription();
+            updateLinkVisibility();
         }
 
         function renderOverviewBlocks(g, functions, positions) {
