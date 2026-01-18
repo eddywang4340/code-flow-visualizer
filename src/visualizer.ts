@@ -495,7 +495,6 @@ export class FlowVisualizer {
                 renderStandardView(g, functions, positions);
             }
 
-            setupInteractions(svg, g);
             updateLayoutDescription();
         }
 
@@ -801,7 +800,9 @@ export class FlowVisualizer {
                 text.setAttribute('y', positions[i].y - 18);
                 text.setAttribute('text-anchor', 'middle');
                 text.setAttribute('fill', 'var(--vscode-foreground)');
-                text.textContent = func.name.length > 15 ? func.name.substring(0, 12) + '...' : func.name;
+                text.textContent = func.displayName && func.displayName.length > 15 
+                ? func.displayName.substring(0, 12) + '...' 
+                : (func.displayName || func.name);
                 nodeG.appendChild(text);
 
                 nodeG.addEventListener('mouseenter', () => {
@@ -811,7 +812,8 @@ export class FlowVisualizer {
                             vscode.postMessage({
                                 command: 'navigateToFunction',
                                 functionName: func.name,
-                                line: func.startLine
+                                line: func.startLine,
+                                fileName: func.fileName
                             });
                         }
                     }
@@ -1279,6 +1281,7 @@ export class FlowVisualizer {
 
         function showInfo(func) {
             const panel = document.getElementById('info-panel');
+            const fileName = func.fileName ? func.fileName.split('/').pop() : 'Unknown'; // Add this line
             panel.innerHTML = \`
                 <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
                     <h3 style="margin: 0;">\${func.displayName || func.name}</h3>
@@ -1302,7 +1305,8 @@ export class FlowVisualizer {
             panel.style.display = 'none';
         }
 
-        function setupInteractions(svg, g) {
+        function initializeGlobalEvents() {
+            const svg = document.getElementById('main-svg');
             const canvas = document.getElementById('canvas');
 
             function isElementInNode(element) {
@@ -1340,7 +1344,10 @@ export class FlowVisualizer {
                 if (isPanning && !isDraggingNode) {
                     translateX = e.clientX - panStartX;
                     translateY = e.clientY - panStartY;
-                    g.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
+                    // FIX: Use global gElement
+                    if (gElement) {
+                        gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
+                    }
                 } else if (isDraggingNode && draggedNodeIndex >= 0) {
                     const pt = svg.createSVGPoint();
                     pt.x = e.clientX;
@@ -1368,32 +1375,34 @@ export class FlowVisualizer {
                     draggedNodeIndex = -1;
                     canvas.style.cursor = 'grab';
                     
-                    const nodes = gElement.querySelectorAll('.node');
-                    nodes.forEach(node => node.classList.remove('dragging'));
+                    if (gElement) {
+                        const nodes = gElement.querySelectorAll('.node');
+                        nodes.forEach(node => node.classList.remove('dragging'));
+                    }
                 }
             });
 
-            // Wheel zoom with auto-expansion at threshold
+            // Wheel zoom
             svg.addEventListener('wheel', (e) => {
                 e.preventDefault();
                 const oldScale = scale;
-                const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                const delta = e.deltaY > 0 ? 0.95 : 1.05;
                 scale *= delta;
                 scale = Math.max(0.1, Math.min(5, scale));
-                g.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
+                
+                // FIX: Use global gElement
+                if (gElement) {
+                    gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
+                }
 
-                // Auto-expand when crossing threshold
                 if (isWorkspaceMode && currentLayout === 'force') {
                     const wasBelow = oldScale <= ZOOM_THRESHOLD;
                     const isAbove = scale > ZOOM_THRESHOLD;
                     
                     if (wasBelow && isAbove) {
-                        // Just crossed threshold - expand all files
                         expandedFiles.clear();
-                        // Show all files by not limiting expandedFiles
                         renderVisualization();
                     } else if (!wasBelow && !isAbove && expandedFiles.size === 0) {
-                        // Just crossed back - collapse
                         renderVisualization();
                     }
                 }
@@ -1469,7 +1478,7 @@ export class FlowVisualizer {
             
             updateLayoutDescription();
         }
-
+        initializeGlobalEvents();
         // Initial render
         renderVisualization();
     </script>
