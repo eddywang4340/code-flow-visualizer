@@ -2,7 +2,7 @@
   "name": "code-flow-visualizer",
   "displayName": "Code Flow Visualizer",
   "description": "Visualize code structure and function call relationships in real-time",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "icon": "CodeFlowIcon.png",
   "publisher": "codeflowio",
   "galleryBanner.color": {
