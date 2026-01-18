@@ -1,18 +1,24 @@
 import * as vscode from 'vscode';
 import { CodeAnalyzer } from './analyzer';
-import { FlowVisualizer } from './visualizer';
+import { FlowVisualizer } from './visualizer-refactored';
     
 let currentVisualizer: FlowVisualizer | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Code Flow Visualizer is now active!');
 
+     // Add this new command to reset welcome
+    let resetWelcomeCommand = vscode.commands.registerCommand('codeFlowVisualizer.resetWelcome', () => {
+        context.globalState.update('codeFlowVisualizer.showWelcome', true);
+        vscode.window.showInformationMessage('Welcome screen will show on next launch');
+    });
+
     // Register command to start visualization
     let startCommand = vscode.commands.registerCommand('codeFlowVisualizer.start', () => {
         if (currentVisualizer) {
             currentVisualizer.reveal();
         } else {
-            currentVisualizer = new FlowVisualizer(context.extensionUri);
+            currentVisualizer = new FlowVisualizer(context.extensionUri, context);
             currentVisualizer.onDidDispose(() => {
                 currentVisualizer = undefined;
             });
@@ -34,7 +40,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Create or show visualizer
         if (!currentVisualizer) {
-            currentVisualizer = new FlowVisualizer(context.extensionUri);
+            currentVisualizer = new FlowVisualizer(context.extensionUri, context);
             currentVisualizer.onDidDispose(() => {
                 currentVisualizer = undefined;
             });
@@ -70,7 +76,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Create or show visualizer
         if (!currentVisualizer) {
-            currentVisualizer = new FlowVisualizer(context.extensionUri);
+            currentVisualizer = new FlowVisualizer(context.extensionUri, context);
             currentVisualizer.onDidDispose(() => {
                 currentVisualizer = undefined;
             });
@@ -91,7 +97,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    context.subscriptions.push(startCommand, analyzeFileCommand, analyzeWorkspaceCommand, saveListener);
+    context.subscriptions.push(resetWelcomeCommand, startCommand, analyzeFileCommand, analyzeWorkspaceCommand, saveListener);
 }
 
 export function deactivate() {
