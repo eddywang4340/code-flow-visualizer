@@ -331,13 +331,25 @@ export function getWebviewStyles(): string {
         }
 
         .node circle {
-            stroke: rgba(0, 0, 0, 0.3);
-            stroke-width: 2px;
-            transition: all 0.3s;
+            /* Use a vibrant gradient similar to the purple in your logo */
+            fill: #9d66e5; 
+            
+            /* A semi-transparent white stroke gives it a "glass" edge */
+            stroke: rgba(255, 255, 255, 0.4);
+            stroke-width: 1.5px;
+            
+            /* The Glow: matches the button shadow in your image */
+            filter: drop-shadow(0 0 8px rgba(157, 102, 229, 0.6));
+            
+            /* Smooth interaction */
+            transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+            cursor: pointer;
         }
 
         .node:hover circle {
-            stroke-width: 3px;
+            /* Brighten and expand the glow on hover */
+            fill: #b98eff;
+            filter: drop-shadow(0 0 12px rgba(157, 102, 229, 0.9));
         }
 
         /* ========== NODE TEXT ========== */
