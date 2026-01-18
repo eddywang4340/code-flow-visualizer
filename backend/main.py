@@ -59,6 +59,15 @@ async def analyze_code(request: AnalyzeRequest):
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/")
+async def root():
+    return {
+        "status": "online",
+        "message": "Flow Visualizer Backend is running",
+        "docs": "/docs"
+    }
+    
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
