@@ -12,6 +12,19 @@ export function getWebviewStyles(): string {
             background-color: var(--vscode-editor-background);
             min-height: 100vh;
         }
+        .cta-button.secondary {
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+            width: 80%;
+            justify-content: center;
+            align-items: cent
+        }
+
+        .cta-button {
+            margin: 5px;
+            width: 80%;
+            justify-content: center;
+            align-items: center;
+        }
 
         #container {
             width: 100vw;

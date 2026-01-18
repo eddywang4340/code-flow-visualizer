@@ -20,7 +20,7 @@ export class FlowVisualizer {
         // Check if user has dismissed welcome before
         this._showWelcome = context.globalState.get('codeFlowVisualizer.showWelcome', true);
 
-        // Create webview panel
+        // Create webview panell
         this._panel = vscode.window.createWebviewPanel(
             'codeFlowVisualizer',
             'Code Flow Visualizer',
@@ -30,11 +30,14 @@ export class FlowVisualizer {
                 retainContextWhenHidden: true,
                 localResourceRoots: [
                     vscode.Uri.joinPath(this._extensionUri, 'out'),
-                    vscode.Uri.joinPath(this._extensionUri, 'src', 'webview')
+                    vscode.Uri.joinPath(this._extensionUri, 'src', 'webview'),
+                    vscode.Uri.joinPath(this._extensionUri) // Ensure root is accessible for the icon
                 ]
             }
         );
 
+        // --- ADD THIS LINE ---
+        this._panel.iconPath = vscode.Uri.joinPath(this._extensionUri, 'CodeFlowIcon.png');
         // Set initial HTML content (welcome screen or visualization)
         this._updateContent();
 
@@ -42,6 +45,12 @@ export class FlowVisualizer {
         this._panel.webview.onDidReceiveMessage(
             async message => {
                 switch (message.command) {
+                    case 'analyzeCurrentFile':
+                        vscode.commands.executeCommand('codeFlowVisualizer.analyzeCurrentFile');
+                        break;
+                    case 'analyzeWorkspace':
+                        vscode.commands.executeCommand('codeFlowVisualizer.analyzeWorkspace');
+                        break;
                     case 'navigateToFunction':
                         this._navigateToFunction(message.functionName, message.line, message.fileName);
                         break;

@@ -32,15 +32,16 @@ export function getWelcomeHTML(): string {
                     <p class="hero-subtitle">Transform your codebase into interactive visual insights</p>
                     
                     <div class="quick-start">
-                        <div class="shortcut-badge">
-                            <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>V</kbd>
-                        </div>
-                        <span class="or-text">or use</span>
-                        <button class="cta-button" onclick="openCommandPalette()">
-                            <span class="button-icon">⚡</span>
-                            Command Palette
+                        <button class="cta-button" onclick="analyzeWorkspace()">
+                            <span class="button-icon">📁</span>
+                            Analyze Workspace
+                        </button>
+                        <button class="cta-button secondary" onclick="analyzeCurrentFile()">
+                            <span class="button-icon">📄</span>
+                            Analyze File
                         </button>
                     </div>
+
                 </div>
 
                 <!-- Interactive Demo Hint -->
@@ -53,12 +54,6 @@ export function getWelcomeHTML(): string {
                     </div>
                 </div>
 
-                <!-- Actions -->
-                <div class="welcome-actions">
-                    <button class="primary-action" onclick="openCommandPalette()">
-                        Get Started
-                    </button>
-                </div>
 
                 <!-- Footer -->
                 <div class="welcome-footer">
@@ -398,9 +393,15 @@ export function getWelcomeHTML(): string {
         </style>
 
         <script>
-            function openCommandPalette() {
+            function analyzeCurrentFile() {
                 vscode.postMessage({
-                    command: 'openCommandPalette'
+                    command: 'analyzeCurrentFile'
+                });
+            }
+
+            function analyzeWorkspace() {
+                vscode.postMessage({
+                    command: 'analyzeWorkspace'
                 });
             }
 

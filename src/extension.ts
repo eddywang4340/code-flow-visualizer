@@ -7,6 +7,18 @@ let currentVisualizer: FlowVisualizer | undefined;
 export function activate(context: vscode.ExtensionContext) {
     console.log('Code Flow Visualizer is now active!');
 
+    // Create status bar button
+    const statusBarButton = vscode.window.createStatusBarItem(
+        vscode.StatusBarAlignment.Right, 
+        100 // Priority (higher = more to the left)
+    );
+    statusBarButton.text = "$(graph-scatter) Code Flow"; // $(graph) is a built-in icon
+    statusBarButton.tooltip = "Open Code Flow Visualizer";
+    statusBarButton.command = 'codeFlowVisualizer.start';
+    statusBarButton.show();
+    
+    context.subscriptions.push(statusBarButton);
+
      // Add this new command to reset welcome
     let resetWelcomeCommand = vscode.commands.registerCommand('codeFlowVisualizer.resetWelcome', () => {
         context.globalState.update('codeFlowVisualizer.showWelcome', true);
@@ -28,10 +40,46 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register command to analyze current file
     let analyzeFileCommand = vscode.commands.registerCommand('codeFlowVisualizer.analyzeCurrentFile', async () => {
-        const editor = vscode.window.activeTextEditor;
+        let editor = vscode.window.activeTextEditor;
+        
+        // If no active editor, let user pick a file
         if (!editor) {
-            vscode.window.showErrorMessage('No active editor found!');
-            return;
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders) {
+                vscode.window.showErrorMessage('No workspace folder found. Please open a folder first.');
+                return;
+            }
+
+            // Find all supported files
+            const files = await vscode.workspace.findFiles(
+                '**/*.{js,ts,py,java}', 
+                '**/node_modules/**'
+            );
+
+            if (files.length === 0) {
+                vscode.window.showInformationMessage('No supported files found. Try analyzing the entire workspace instead.');
+                return;
+            }
+
+            // Show quick pick to select a file
+            const fileItems = files.map(file => ({
+                label: vscode.workspace.asRelativePath(file),
+                description: file.fsPath,
+                uri: file
+            }));
+
+            const selected = await vscode.window.showQuickPick(fileItems, {
+                placeHolder: 'Select a file to analyze',
+                matchOnDescription: true
+            });
+
+            if (!selected) {
+                return; // User cancelled
+            }
+
+            // Open the selected file
+            const document = await vscode.workspace.openTextDocument(selected.uri);
+            editor = await vscode.window.showTextDocument(document, vscode.ViewColumn.One);
         }
 
         const document = editor.document;
