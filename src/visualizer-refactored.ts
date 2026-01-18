@@ -465,6 +465,93 @@ export class FlowVisualizer {
         const ZOOM_THRESHOLD = 1.5;
         let expandedFiles = new Set();
 
+        // Significance-based progressive disclosure system
+        const SIGNIFICANCE_LEVELS = {
+            0.5: 70,   // Very zoomed out: high significance
+            0.8: 50,   // Zoomed out: medium-high
+            1.0: 30,   // Normal: LOW threshold (was 50 - too strict!)
+            1.3: 20,   // Zoomed in: include most
+            1.8: 10,   // Very zoomed in: helpers
+            2.5: 0     // Maximum zoom: everything
+        };
+
+        function showAllFunctionsBypass() {
+            // Call this from console if you want to see all functions regardless of significance
+            const oldShouldShow = window.shouldShowFunction;
+            window.shouldShowFunction = () => true;
+            renderVisualization();
+            console.log('Showing all functions (bypass enabled)');
+        }
+
+        window.showAllFunctionsBypass = showAllFunctionsBypass;
+        window.debugSignificance = function() {
+            if (!currentData) {
+                console.log('No data loaded');
+                return;
+            }
+            
+            const funcs = Object.values(currentData.functions);
+            console.log(\`Total functions: \${funcs.length}\`);
+            console.log(\`Current zoom: \${scale.toFixed(2)}x\`);
+            console.log(\`Min significance needed: \${getMinSignificance(scale)}\`);
+            console.log('\nFunction significance scores:');
+            
+            funcs.forEach(f => {
+                const sig = f.significance !== undefined ? f.significance : 'MISSING';
+                console.log(\`  \${f.name}: \${sig}\`);
+            });
+            
+            const withSig = funcs.filter(f => f.significance !== undefined).length;
+            const withoutSig = funcs.length - withSig;
+            console.log(\`\\nFunctions WITH significance: \${withSig}\`);
+            console.log(\`Functions WITHOUT significance: \${withoutSig}\`);
+        };
+
+        console.log('Significance debugging enabled. Type debugSignificance() to inspect function scores.');
+        console.log('Type showAllFunctionsBypass() to temporarily show all functions.');
+
+        function getMinSignificance(zoomLevel) {
+            // Find the appropriate threshold based on current zoom
+            const thresholds = Object.keys(SIGNIFICANCE_LEVELS)
+                .map(k => parseFloat(k))
+                .sort((a, b) => a - b);
+            
+            for (let i = thresholds.length - 1; i >= 0; i--) {
+                if (zoomLevel >= thresholds[i]) {
+                    return SIGNIFICANCE_LEVELS[thresholds[i]];
+                }
+            }
+            
+            return SIGNIFICANCE_LEVELS[thresholds[0]];
+        }
+
+        function shouldShowFunction(func, zoomLevel, isWorkspaceMode, expandedFiles, filesToShow) {
+            // DEBUG: Log what we're checking
+            if (!func.significance) {
+                console.warn('Function missing significance:', func.name, func);
+            }
+            
+            // Always respect file filtering in workspace mode
+            if (isWorkspaceMode && expandedFiles.size > 0 && !filesToShow.has(func.fileName)) {
+                return false;
+            }
+            
+            // Get minimum significance required at this zoom level
+            const minSignificance = getMinSignificance(zoomLevel);
+            
+            // DEFAULT TO SHOWING if significance is missing (fail-open)
+            const funcSignificance = func.significance !== undefined ? func.significance : 100;
+            
+            const shouldShow = funcSignificance >= minSignificance;
+            
+            // DEBUG logging
+            if (!shouldShow) {
+                console.log(\`Hiding \${func.name}: significance \${funcSignificance} < \${minSignificance} at zoom \${zoomLevel.toFixed(2)}\`);
+            }
+            
+            return shouldShow;
+        }
+
         // Tools menu functions
         function toggleToolsMenu() {
             const dropdown = document.getElementById('tools-dropdown');
@@ -736,16 +823,27 @@ export class FlowVisualizer {
 
         function renderDetailedView(g, functions, positions) {
             const filesToShow = expandedFiles.size > 0 ? expandedFiles : new Set(fileClusters.keys());
+            
+            // Filter functions by significance AND file visibility
+            const visibleFunctions = functions.filter((func, i) => 
+                positions[i].x > -1000 && 
+                shouldShowFunction(func, scale, isWorkspaceMode, expandedFiles, filesToShow)
+            );
+            
+            const visibleIndices = new Set(
+                visibleFunctions.map(func => functions.indexOf(func))
+            );
 
-            // Draw links
+            // Draw links only between visible functions
             functions.forEach((func, i) => {
-                if (positions[i].x < -1000 || !filesToShow.has(func.fileName)) return;
+                if (!visibleIndices.has(i)) return;
 
                 func.calls.forEach(calledFunc => {
                     const targetIndex = functions.findIndex(f => f.name === calledFunc);
                     const targetFunc = functions[targetIndex];
 
                     if (targetIndex !== -1 && 
+                        visibleIndices.has(targetIndex) &&
                         positions[targetIndex].x > -1000 && 
                         targetFunc && 
                         filesToShow.has(targetFunc.fileName)) {
@@ -757,14 +855,20 @@ export class FlowVisualizer {
                         line.setAttribute('y1', positions[i].y);
                         line.setAttribute('x2', positions[targetIndex].x);
                         line.setAttribute('y2', positions[targetIndex].y);
+                        
+                        // Add fade-in animation for newly revealed functions
+                        line.style.opacity = '0';
+                        line.style.transition = 'opacity 0.3s ease';
+                        setTimeout(() => { line.style.opacity = '0.4'; }, 10);
+                        
                         g.appendChild(line);
                     }
                 });
             });
 
-            // Draw nodes - SIMPLIFIED STYLING
-            functions.forEach((func, i) => {
-                if (positions[i].x < -1000) return;
+            // Draw only visible nodes
+            visibleFunctions.forEach(func => {
+                const i = functions.indexOf(func);
                 if (!filesToShow.has(func.fileName)) return;
                 
                 const nodeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -772,11 +876,21 @@ export class FlowVisualizer {
                 nodeG.setAttribute('data-function-name', func.name);
                 nodeG.setAttribute('data-line', func.startLine.toString());
                 nodeG.setAttribute('data-node-index', i.toString());
+                nodeG.setAttribute('data-significance', (func.significance || 50).toString());
+                
+                // Fade in animation
+                nodeG.style.opacity = '0';
+                nodeG.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
                 
                 const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                 circle.setAttribute('cx', positions[i].x);
                 circle.setAttribute('cy', positions[i].y);
-                circle.setAttribute('r', (10 + func.complexity * 1.2).toString());
+                
+                // Vary size by significance (higher significance = slightly larger)
+                const significance = func.significance || 50;
+                const baseRadius = 10 + func.complexity * 1.2;
+                const significanceBonus = (significance / 100) * 4; // 0-4px bonus
+                circle.setAttribute('r', (baseRadius + significanceBonus).toString());
                 
                 if (func.complexity < 3) {
                     circle.setAttribute('fill', '#4CAF50');
@@ -784,6 +898,11 @@ export class FlowVisualizer {
                     circle.setAttribute('fill', '#FFC107');
                 } else {
                     circle.setAttribute('fill', '#FF5722');
+                }
+                
+                // Add subtle glow to high-significance functions
+                if (significance >= 70) {
+                    circle.style.filter = 'drop-shadow(0 0 3px rgba(102, 126, 234, 0.5))';
                 }
                 
                 nodeG.appendChild(circle);
@@ -799,6 +918,7 @@ export class FlowVisualizer {
                     : (func.displayName || func.name);
                 nodeG.appendChild(text);
 
+                // Event handlers (same as before)
                 nodeG.addEventListener('mouseenter', () => {
                     if (!isDraggingNode) {
                         nodeG.classList.add('highlighted');
@@ -848,17 +968,33 @@ export class FlowVisualizer {
                 });
 
                 g.appendChild(nodeG);
+                
+                // Trigger fade-in
+                setTimeout(() => { 
+                    nodeG.style.opacity = '1'; 
+                }, 10);
             });
         }
 
+
         function renderStandardView(g, functions, positions) {
-            // Draw links
+            // Filter by significance
+            const visibleFunctions = functions.filter((func, i) => 
+                positions[i].x > -1000 && 
+                shouldShowFunction(func, scale, isWorkspaceMode, expandedFiles, new Set())
+            );
+            
+            const visibleIndices = new Set(
+                visibleFunctions.map(func => functions.indexOf(func))
+            );
+
+            // Draw links only between visible functions
             functions.forEach((func, i) => {
-                if (positions[i].x < -1000) return;
+                if (!visibleIndices.has(i) || positions[i].x < -1000) return;
                 
                 func.calls.forEach(calledFunc => {
                     const targetIndex = functions.findIndex(f => f.name === calledFunc);
-                    if (targetIndex !== -1 && positions[targetIndex].x > -1000) {
+                    if (targetIndex !== -1 && visibleIndices.has(targetIndex) && positions[targetIndex].x > -1000) {
                         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                         line.setAttribute('class', 'link');
                         line.setAttribute('data-source-index', i.toString());
@@ -867,13 +1003,19 @@ export class FlowVisualizer {
                         line.setAttribute('y1', positions[i].y);
                         line.setAttribute('x2', positions[targetIndex].x);
                         line.setAttribute('y2', positions[targetIndex].y);
+                        
+                        line.style.opacity = '0';
+                        line.style.transition = 'opacity 0.3s ease';
+                        setTimeout(() => { line.style.opacity = '0.4'; }, 10);
+                        
                         g.appendChild(line);
                     }
                 });
             });
 
-            // Draw nodes - SIMPLIFIED STYLING
-            functions.forEach((func, i) => {
+            // Draw only visible nodes
+            visibleFunctions.forEach(func => {
+                const i = functions.indexOf(func);
                 if (positions[i].x < -1000) return;
                 
                 const nodeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -881,11 +1023,19 @@ export class FlowVisualizer {
                 nodeG.setAttribute('data-function-name', func.name);
                 nodeG.setAttribute('data-line', func.startLine.toString());
                 nodeG.setAttribute('data-node-index', i.toString());
+                nodeG.setAttribute('data-significance', (func.significance || 50).toString());
+                
+                nodeG.style.opacity = '0';
+                nodeG.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
                 
                 const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                 circle.setAttribute('cx', positions[i].x);
                 circle.setAttribute('cy', positions[i].y);
-                circle.setAttribute('r', (10 + func.complexity * 1.2).toString());
+                
+                const significance = func.significance || 50;
+                const baseRadius = 10 + func.complexity * 1.2;
+                const significanceBonus = (significance / 100) * 4;
+                circle.setAttribute('r', (baseRadius + significanceBonus).toString());
                 
                 if (func.complexity < 3) {
                     circle.setAttribute('fill', '#4CAF50');
@@ -893,6 +1043,10 @@ export class FlowVisualizer {
                     circle.setAttribute('fill', '#FFC107');
                 } else {
                     circle.setAttribute('fill', '#FF5722');
+                }
+                
+                if (significance >= 70) {
+                    circle.style.filter = 'drop-shadow(0 0 3px rgba(102, 126, 234, 0.5))';
                 }
                 
                 nodeG.appendChild(circle);
@@ -908,6 +1062,7 @@ export class FlowVisualizer {
                     : (func.displayName || func.name);
                 nodeG.appendChild(text);
 
+                // Same event handlers as detailed view
                 nodeG.addEventListener('mouseenter', () => {
                     if (!isDraggingNode) {
                         nodeG.classList.add('highlighted');
@@ -919,18 +1074,6 @@ export class FlowVisualizer {
                                 fileName: func.fileName
                             });
                         }
-                    }
-                });
-
-                nodeG.addEventListener('dblclick', (e) => {
-                    e.stopPropagation();
-                    if (!autoNavigate) {  // Only navigate on double-click when auto-navigate is OFF
-                        vscode.postMessage({
-                            command: 'navigateToFunction',
-                            functionName: func.name,
-                            line: func.startLine,
-                            fileName: func.fileName
-                        });
                     }
                 });
 
@@ -948,6 +1091,18 @@ export class FlowVisualizer {
                     }
                 });
 
+                nodeG.addEventListener('dblclick', (e) => {
+                    e.stopPropagation();
+                    if (!autoNavigate) {
+                        vscode.postMessage({
+                            command: 'navigateToFunction',
+                            functionName: func.name,
+                            line: func.startLine,
+                            fileName: func.fileName
+                        });
+                    }
+                });
+
                 nodeG.addEventListener('mousedown', (e) => {
                     e.stopPropagation();
                     e.preventDefault();
@@ -957,6 +1112,10 @@ export class FlowVisualizer {
                 });
 
                 g.appendChild(nodeG);
+                
+                setTimeout(() => { 
+                    nodeG.style.opacity = '1'; 
+                }, 10);
             });
         }
 
@@ -1017,18 +1176,34 @@ export class FlowVisualizer {
             const layoutDesc = document.getElementById('layout-description');
             if (!layoutDesc) return;
 
+            const minSig = getMinSignificance(scale);
+            
+            if (!currentData || !currentData.functions) {
+                layoutDesc.textContent = 'No data loaded';
+                return;
+            }
+            
+            const allFuncs = Object.values(currentData.functions);
+            const funcCount = allFuncs.filter(f => 
+                (f.significance !== undefined ? f.significance : 100) >= minSig
+            ).length;
+            
+            const totalFuncs = allFuncs.length;
+
             if (isWorkspaceMode && currentLayout === 'force') {
                 if (scale > ZOOM_THRESHOLD || expandedFiles.size > 0) {
-                    layoutDesc.textContent = 'Detailed view - showing function nodes and links';
+                    layoutDesc.textContent = \`Showing \${funcCount}/\${totalFuncs} functions (sig ≥ \${minSig}, zoom: \${scale.toFixed(2)}x)\`;
                 } else {
                     layoutDesc.textContent = 'File overview - zoom in or click a file to see details';
                 }
             } else if (currentLayout === 'hierarchical') {
-                layoutDesc.textContent = 'Showing only deep call chains (depth ≥ 2) and important hubs';
+                layoutDesc.textContent = \`Hierarchical - \${funcCount}/\${totalFuncs} functions (sig ≥ \${minSig})\`;
             } else {
-                layoutDesc.textContent = 'Showing all connected functions';
+                layoutDesc.textContent = \`Showing \${funcCount}/\${totalFuncs} functions visible (sig ≥ \${minSig}, zoom: \${scale.toFixed(2)}x)\`;
             }
         }
+
+
 
         function updateNodePositions() {
             if (!gElement || !currentData) return;
@@ -1378,19 +1553,18 @@ export class FlowVisualizer {
             });
 
             const panel = document.getElementById('info-panel');
-            const rawFileName = func.fileName ? func.fileName.split('/').pop() : 'Unknown'; // Add this line
-
-            if (displayName.length > 28) {  
-                const ext = displayName.split('.').pop();
-                const nameWithoutExt = displayName.substring(0, displayName.lastIndexOf('.'));
-                let displayName = rawFileName;
-                
-                // If extension exists and name is still long, truncate the middle
-                if (ext && nameWithoutExt.length > 20) {
-                    displayName = nameWithoutExt.substring(0, 20) + '...' + ext;
-                } else {
-                    displayName = displayName.substring(0, 25) + '...';
-                }
+            const fileName = func.fileName ? func.fileName.split('/').pop() : 'Unknown';
+            
+            // Get significance level description
+            const significance = func.significance || 50;
+            let sigLabel = 'Medium';
+            let sigColor = '#FFC107';
+            if (significance >= 70) {
+                sigLabel = 'High (Entry Point/Export)';
+                sigColor = '#4CAF50';
+            } else if (significance < 40) {
+                sigLabel = 'Low (Helper Function)';
+                sigColor = '#9CA3AF';
             }
             
             panel.innerHTML = \`
@@ -1401,6 +1575,7 @@ export class FlowVisualizer {
                 <ul>
                     <li><strong>File:</strong> \${fileName}</li>
                     <li><strong>Lines:</strong> \${func.startLine} - \${func.endLine}</li>
+                    <li><strong>Significance:</strong> <span style="color: \${sigColor}; font-weight: bold;">\${sigLabel} (\${significance})</span></li>
                     <li><strong>Complexity:</strong> <span id="complexity-value">Analyzing...</span></li>
                     <li><strong>Description:</strong> <span id="description-value">Analyzing...</span></li>
                     <li><strong>Parameters:</strong> \${func.params.length}</li>
@@ -1410,26 +1585,6 @@ export class FlowVisualizer {
             \`;
             panel.style.display = 'block';
         }
-
-        window.addEventListener('message', event => {
-            const message = event.data;
-            switch (message.command) {
-                case 'updateData':
-                    currentData = message.data;
-                    renderVisualization();
-                    break;
-                case 'updateComplexity':
-                    const compSpan = document.getElementById('complexity-value');
-                    if (compSpan) {
-                        compSpan.innerText = message.complexity; 
-                    }
-                    const descSpan = document.getElementById('description-value');
-                    if (descSpan) {
-                        descSpan.innerText = message.description; 
-                    }
-                    break;
-            }
-        });
 
         function hideInfo() {
             const panel = document.getElementById('info-panel');

@@ -15,6 +15,7 @@ export interface FunctionNode {
     complexity: string;
     fileName?: string;
     code?: string;
+    significance?: number; // 0-100, higher = more important
 }
 
 export interface CodeAnalysis {
@@ -30,11 +31,10 @@ export class CodeAnalyzer {
     private pyParser: Parser;
     private javaParser: Parser;
 
-    // Complexity-related node types for cyclomatic complexity calculation
     private readonly complexityNodeTypes = new Set([
         'if_statement', 'for_statement', 'while_statement', 'do_statement',
         'switch_case', 'case_statement', 'catch_clause',
-        'conditional_expression', // ternary
+        'conditional_expression',
         'elif_clause', 'except_clause', 'for_in_statement'
     ]);
 
@@ -95,8 +95,8 @@ export class CodeAnalyzer {
             this.analyzeGeneric(text, analysis);
         }
 
-        // Build calledBy relationships (same as regex version)
         this.buildCalledByRelationships(analysis);
+        this.calculateSignificance(analysis); // NEW: Calculate significance scores
 
         console.log(`Found ${analysis.functions.size} functions`);
         console.log('=== Analysis complete ===\n');
@@ -104,9 +104,63 @@ export class CodeAnalyzer {
         return analysis;
     }
 
+    private calculateSignificance(analysis: CodeAnalysis): void {
+        const functions = Array.from(analysis.functions.values());
+        
+        if (functions.length === 0) return;
+
+        functions.forEach(func => {
+            let score = 50; // Base score
+
+            // ENTRY POINTS (not called by anyone) = MOST SIGNIFICANT
+            if (func.calledBy.length === 0) {
+                score += 40;
+            }
+
+            // HUB FUNCTIONS (called by many) = SIGNIFICANT
+            // More callers = more important coordination point
+            if (func.calledBy.length > 0) {
+                score += Math.min(func.calledBy.length * 8, 30);
+            }
+
+            // CALLS MANY FUNCTIONS = COORDINATOR (moderately significant)
+            if (func.calls.length > 3) {
+                score += Math.min(func.calls.length * 2, 10);
+            }
+
+            // HELPER FUNCTIONS (high fanin, simple) = LESS SIGNIFICANT
+            // Called by many but simple = utility function
+            if (func.calledBy.length > 3) {
+                score -= 20;
+            }
+
+            // DEEP IN CALL CHAIN = LESS SIGNIFICANT
+            // Calculate depth (simple version: functions only calling others that also get called)
+            if (func.calls.length > 0 && func.calledBy.length > 0) {
+                const calleesAlsoCalled = func.calls.filter(calledName => {
+                    const calledFunc = functions.find(f => f.name === calledName);
+                    return calledFunc && calledFunc.calledBy.length > 0;
+                }).length;
+                
+                if (calleesAlsoCalled > 2) {
+                    score -= 15; // Deep in the middle of call chain
+                }
+            }
+
+            // EXPORTED FUNCTIONS = MORE SIGNIFICANT
+            if (analysis.exports.includes(func.name)) {
+                score += 20;
+            }
+
+            // Clamp to 0-100
+            func.significance = Math.max(0, Math.min(100, score));
+        });
+
+        console.log('Significance scores calculated');
+    }
+
     private analyzeJavaScript(tree: Parser.Tree, analysis: CodeAnalysis): void {
         const traverse = (node: Parser.SyntaxNode) => {
-            // Extract imports
             if (node.type === 'import_statement') {
                 const source = node.childForFieldName('source');
                 if (source) {
@@ -114,7 +168,6 @@ export class CodeAnalyzer {
                 }
             }
 
-            // Extract exports
             if (node.type === 'export_statement') {
                 const declaration = node.childForFieldName('declaration');
                 if (declaration) {
@@ -125,7 +178,6 @@ export class CodeAnalyzer {
                 }
             }
 
-            // Function declarations
             if (node.type === 'function_declaration' || node.type === 'generator_function_declaration') {
                 const nameNode = node.childForFieldName('name');
                 if (nameNode) {
@@ -133,7 +185,6 @@ export class CodeAnalyzer {
                 }
             }
 
-            // Method definitions (in classes)
             if (node.type === 'method_definition') {
                 const nameNode = node.childForFieldName('name');
                 if (nameNode) {
@@ -141,7 +192,6 @@ export class CodeAnalyzer {
                 }
             }
 
-            // Arrow functions and function expressions assigned to variables
             if (node.type === 'lexical_declaration' || node.type === 'variable_declaration') {
                 for (const child of node.children) {
                     if (child.type === 'variable_declarator') {
@@ -158,7 +208,6 @@ export class CodeAnalyzer {
                 }
             }
 
-            // Recurse through children
             for (const child of node.children) {
                 traverse(child);
             }
@@ -193,14 +242,13 @@ export class CodeAnalyzer {
             params,
             complexity,
             fileName: analysis.fileName,
-            code: node.text // <--- ADDED THIS: captures the source code
+            code: node.text,
+            significance: 50 // Default, will be calculated later
         });
     }
 
-
     private analyzePython(tree: Parser.Tree, analysis: CodeAnalysis): void {
         const traverse = (node: Parser.SyntaxNode) => {
-            // Extract imports
             if (node.type === 'import_statement' || node.type === 'import_from_statement') {
                 if (node.type === 'import_from_statement') {
                     const moduleNode = node.childForFieldName('module_name');
@@ -212,7 +260,6 @@ export class CodeAnalyzer {
                 }
             }
 
-            // Function definitions
             if (node.type === 'function_definition') {
                 const nameNode = node.childForFieldName('name');
                 if (nameNode) {
@@ -220,7 +267,6 @@ export class CodeAnalyzer {
                 }
             }
 
-            // Recurse through children
             for (const child of node.children) {
                 traverse(child);
             }
@@ -255,19 +301,17 @@ export class CodeAnalyzer {
             params,
             complexity,
             fileName: analysis.fileName,
-            code: node.text // <--- ADDED THIS
+            code: node.text,
+            significance: 50
         });
     }
 
-
     private analyzeJava(tree: Parser.Tree, analysis: CodeAnalysis): void {
         const traverse = (node: Parser.SyntaxNode) => {
-            // Extract imports
             if (node.type === 'import_declaration') {
                 analysis.imports.push(node.text.replace('import', '').replace(';', '').trim());
             }
 
-            // Method declarations
             if (node.type === 'method_declaration' || node.type === 'constructor_declaration') {
                 const nameNode = node.childForFieldName('name');
                 if (nameNode && !this.isJavaKeyword(nameNode.text)) {
@@ -275,7 +319,6 @@ export class CodeAnalyzer {
                 }
             }
 
-            // Recurse through children
             for (const child of node.children) {
                 traverse(child);
             }
@@ -310,19 +353,18 @@ export class CodeAnalyzer {
             params,
             complexity,
             fileName: analysis.fileName,
-            code: node.text // <--- ADDED THIS
+            code: node.text,
+            significance: 50
         });
     }
 
-
     private extractParameters(paramsNode: Parser.SyntaxNode, params: string[]): void {
         const extractRecursive = (node: Parser.SyntaxNode) => {
-            // Handle different parameter node types
             if (node.type === 'identifier') {
                 if (!params.includes(node.text)) {
                     params.push(node.text);
                 }
-                return; // Don't recurse into identifiers
+                return;
             }
             
             if (node.type === 'property_identifier') {
@@ -332,7 +374,6 @@ export class CodeAnalyzer {
                 return;
             }
             
-            // TypeScript/Java typed parameters
             if (node.type === 'typed_parameter' || node.type === 'required_parameter' || node.type === 'optional_parameter') {
                 const nameChild = node.childForFieldName('name') || node.childForFieldName('pattern');
                 if (nameChild && nameChild.type === 'identifier' && !params.includes(nameChild.text)) {
@@ -341,7 +382,6 @@ export class CodeAnalyzer {
                 return;
             }
             
-            // Java formal parameters
             if (node.type === 'formal_parameter') {
                 const nameChild = node.childForFieldName('name');
                 if (nameChild && !params.includes(nameChild.text)) {
@@ -350,7 +390,6 @@ export class CodeAnalyzer {
                 return;
             }
 
-            // Python parameters
             if (node.type === 'parameter' || node.type === 'typed_parameter' || node.type === 'typed_default_parameter') {
                 const nameChild = node.childForFieldName('name');
                 if (nameChild && !params.includes(nameChild.text)) {
@@ -359,7 +398,6 @@ export class CodeAnalyzer {
                 return;
             }
             
-            // Recurse for other node types
             for (const child of node.children) {
                 extractRecursive(child);
             }
@@ -376,12 +414,10 @@ export class CodeAnalyzer {
         isPython: boolean = false
     ): void {
         let complexity = "";
-        // More minimal builtin lists - only filter obvious keywords
         const pythonKeywords = ['if', 'for', 'while'];
         const jsKeywords = ['if', 'for', 'while', 'switch', 'catch'];
 
         const traverse = (node: Parser.SyntaxNode) => {
-            // Extract function/method calls
             if (node.type === 'call_expression' || node.type === 'call' || node.type === 'method_invocation') {
                 let calleeName = '';
 
@@ -460,7 +496,8 @@ export class CodeAnalyzer {
                 params: [],
                 complexity: "",
                 fileName: analysis.fileName,
-                code: text
+                code: text,
+                significance: 50
             });
         }
     }
@@ -528,6 +565,9 @@ export class CodeAnalyzer {
                 }
             }
         }
+
+        // Recalculate significance for merged workspace
+        this.calculateSignificance(merged);
 
         return merged;
     }
