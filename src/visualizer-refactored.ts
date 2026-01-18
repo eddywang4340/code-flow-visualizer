@@ -231,7 +231,6 @@ export class FlowVisualizer {
         // This is where all your existing JavaScript logic goes
         // I'll provide a placeholder - you can copy the script from your current visualizer.ts
         return `
-        console.log('Visualization script loaded');
         const vscode = acquireVsCodeApi();
         let currentData = null;
         let currentLayout = 'force';
@@ -255,16 +254,6 @@ export class FlowVisualizer {
         const ZOOM_THRESHOLD = 1.5;
         let expandedFiles = new Set(); // Track which files are manually expanded
 
-        // Handle messages from extension
-        window.addEventListener('message', event => {
-            const message = event.data;
-            switch (message.command) {
-                case 'updateData':
-                    currentData = message.data;
-                    renderVisualization();
-                    break;
-            }
-        });
 
         // Handle auto-navigate toggle
         document.addEventListener('DOMContentLoaded', () => {
@@ -474,9 +463,9 @@ export class FlowVisualizer {
                 blockG.appendChild(rect);
 
                 // IMPROVED: Extract and truncate filename intelligently
-                const fileNameOnly = fileName.split(/[\\/]/).pop() || fileName;
+                const fileNameOnly = fileName.split('\\\\').at(-1);
                 let displayName = fileNameOnly;
-                if (displayName.length > 28) {
+                if (displayName.length > 28) {  
                     const ext = displayName.split('.').pop();
                     const nameWithoutExt = displayName.substring(0, displayName.lastIndexOf('.'));
                     if (ext && nameWithoutExt.length > 20) {
@@ -1213,6 +1202,12 @@ export class FlowVisualizer {
         }
 
         function showInfo(func) {
+            vscode.postMessage({
+                command: 'analyzeComplexity',
+                functionName: func.name,
+                code: func.code // This field is now populated by your AST analyzer
+            });
+
             const panel = document.getElementById('info-panel');
             const fileName = func.fileName ? func.fileName.split('/').pop() : 'Unknown'; // Add this line
             panel.innerHTML = \`
@@ -1223,7 +1218,8 @@ export class FlowVisualizer {
                 <ul>
                     <li><strong>File:</strong> \${fileName}</li>
                     <li><strong>Lines:</strong> \${func.startLine} - \${func.endLine}</li>
-                    <li><strong>Complexity:</strong> \${func.complexity}</li>
+                    <li><strong>Complexity:</strong> <span id="complexity-value">Analyzing...</span></li>
+                    <li><strong>Description:</strong> <span id="description-value">Analyzing...</span></li>
                     <li><strong>Parameters:</strong> \${func.params.length}</li>
                     <li><strong>Calls:</strong> \${func.calls.length} function(s)</li>
                     <li><strong>Called by:</strong> \${func.calledBy.length} function(s)</li>
@@ -1232,6 +1228,26 @@ export class FlowVisualizer {
             \`;
             panel.style.display = 'block';
         }
+
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.command) {
+                case 'updateData':
+                    currentData = message.data;
+                    renderVisualization();
+                    break;
+                case 'updateComplexity':
+                    const compSpan = document.getElementById('complexity-value');
+                    if (compSpan) {
+                        compSpan.innerText = message.complexity; 
+                    }
+                    const descSpan = document.getElementById('description-value');
+                    if (descSpan) {
+                        descSpan.innerText = message.description; 
+                    }
+                    break;
+            }
+        });
 
         function hideInfo() {
             const panel = document.getElementById('info-panel');
