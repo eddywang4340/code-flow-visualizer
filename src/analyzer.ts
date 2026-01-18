@@ -1,15 +1,19 @@
 import * as vscode from 'vscode';
+import Parser = require('tree-sitter');
+import JavaScript = require('tree-sitter-javascript');
+import Python = require('tree-sitter-python');
+import Java = require('tree-sitter-java');
 
 export interface FunctionNode {
     name: string;
-    displayName: string; // Add this - clean name for display
+    displayName: string;
     startLine: number;
     endLine: number;
     calls: string[];
     calledBy: string[];
     params: string[];
     complexity: number;
-    fileName?: string; // Added for clustering
+    fileName?: string;
 }
 
 export interface CodeAnalysis {
@@ -21,11 +25,35 @@ export interface CodeAnalysis {
 }
 
 export class CodeAnalyzer {
-    
+    private jsParser: Parser;
+    private pyParser: Parser;
+    private javaParser: Parser;
+
+    // Complexity-related node types for cyclomatic complexity calculation
+    private readonly complexityNodeTypes = new Set([
+        'if_statement', 'for_statement', 'while_statement', 'do_statement',
+        'switch_case', 'case_statement', 'catch_clause',
+        'conditional_expression', // ternary
+        'elif_clause', 'except_clause', 'for_in_statement'
+    ]);
+
+    constructor() {
+        this.jsParser = new Parser();
+        this.jsParser.setLanguage(JavaScript as any);
+
+        this.pyParser = new Parser();
+        this.pyParser.setLanguage(Python as any);
+
+        this.javaParser = new Parser();
+        this.javaParser.setLanguage(Java as any);
+    }
+
     async analyzeDocument(document: vscode.TextDocument): Promise<CodeAnalysis> {
         const language = document.languageId;
-        const text = document.getText();
         const fileName = document.fileName;
+        const text = document.getText();
+
+        console.log(`\n=== Analyzing ${fileName} (${language}) ===`);
 
         const analysis: CodeAnalysis = {
             fileName,
@@ -35,306 +63,436 @@ export class CodeAnalyzer {
             exports: []
         };
 
-        switch (language) {
-            case 'javascript':
-            case 'typescript':
-                this.analyzeJavaScript(text, analysis);
-                break;
-            case 'python':
-                this.analyzePython(text, analysis);
-                break;
-            case 'java':
-                this.analyzeJava(text, analysis);
-                break;
-            default:
-                this.analyzeGeneric(text, analysis);
+        try {
+            let tree: Parser.Tree | undefined;
+
+            switch (language) {
+                case 'javascript':
+                case 'typescript':
+                case 'typescriptreact':
+                case 'javascriptreact':
+                    console.log('Using JavaScript parser');
+                    tree = this.jsParser.parse(text);
+                    this.analyzeJavaScript(tree, analysis);
+                    break;
+                case 'python':
+                    console.log('Using Python parser');
+                    tree = this.pyParser.parse(text);
+                    this.analyzePython(tree, analysis);
+                    break;
+                case 'java':
+                    console.log('Using Java parser');
+                    tree = this.javaParser.parse(text);
+                    this.analyzeJava(tree, analysis);
+                    break;
+                default:
+                    console.log('Using generic fallback parser');
+                    this.analyzeGeneric(text, analysis);
+            }
+        } catch (e) {
+            console.error('Tree-sitter analysis failed, falling back to generic:', e);
+            this.analyzeGeneric(text, analysis);
         }
+
+        // Build calledBy relationships (same as regex version)
+        this.buildCalledByRelationships(analysis);
+
+        console.log(`Found ${analysis.functions.size} functions`);
+        console.log('=== Analysis complete ===\n');
 
         return analysis;
     }
 
-    private analyzeJavaScript(text: string, analysis: CodeAnalysis): void {
-        const lines = text.split('\n');
-        
-        // Find imports
-        const importRegex = /import\s+.*\s+from\s+['"]([^'"]+)['"]/g;
-        let match;
-        while ((match = importRegex.exec(text)) !== null) {
-            analysis.imports.push(match[1]);
-        }
+    private analyzeJavaScript(tree: Parser.Tree, analysis: CodeAnalysis): void {
+        const traverse = (node: Parser.SyntaxNode) => {
+            // Extract imports
+            if (node.type === 'import_statement') {
+                const source = node.childForFieldName('source');
+                if (source) {
+                    analysis.imports.push(source.text.replace(/['"]/g, ''));
+                }
+            }
 
-        // Find exports
-        const exportRegex = /export\s+(function|class|const|let|var)\s+(\w+)/g;
-        while ((match = exportRegex.exec(text)) !== null) {
-            analysis.exports.push(match[2]);
-        }
+            // Extract exports
+            if (node.type === 'export_statement') {
+                const declaration = node.childForFieldName('declaration');
+                if (declaration) {
+                    const nameNode = declaration.childForFieldName('name');
+                    if (nameNode) {
+                        analysis.exports.push(nameNode.text);
+                    }
+                }
+            }
 
-        // Find functions
-        const functionRegex = /(?:function\s+(\w+)|const\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|(\w+)\s*:\s*(?:async\s*)?\([^)]*\)\s*=>)/g;
-        
-        while ((match = functionRegex.exec(text)) !== null) {
-            const functionName = match[1] || match[2] || match[3];
-            if (!functionName) continue;
+            // Function declarations
+            if (node.type === 'function_declaration' || node.type === 'generator_function_declaration') {
+                const nameNode = node.childForFieldName('name');
+                if (nameNode) {
+                    this.processJavaScriptFunction(nameNode.text, node, analysis);
+                }
+            }
 
-            const startIndex = match.index;
-            const startLine = text.substring(0, startIndex).split('\n').length - 1;
-            
-            // Find function end (simplified - looks for closing brace)
-            let braceCount = 0;
-            let foundStart = false;
-            let endLine = startLine;
-            
-            for (let i = startLine; i < lines.length; i++) {
-                const line = lines[i];
-                for (const char of line) {
-                    if (char === '{') {
-                        braceCount++;
-                        foundStart = true;
-                    } else if (char === '}') {
-                        braceCount--;
-                        if (foundStart && braceCount === 0) {
-                            endLine = i;
-                            break;
+            // Method definitions (in classes)
+            if (node.type === 'method_definition') {
+                const nameNode = node.childForFieldName('name');
+                if (nameNode) {
+                    this.processJavaScriptFunction(nameNode.text, node, analysis);
+                }
+            }
+
+            // Arrow functions and function expressions assigned to variables
+            if (node.type === 'lexical_declaration' || node.type === 'variable_declaration') {
+                for (const child of node.children) {
+                    if (child.type === 'variable_declarator') {
+                        const nameNode = child.childForFieldName('name');
+                        const valueNode = child.childForFieldName('value');
+                        
+                        if (nameNode && valueNode && 
+                            (valueNode.type === 'arrow_function' || 
+                             valueNode.type === 'function_expression' ||
+                             valueNode.type === 'generator_function')) {
+                            this.processJavaScriptFunction(nameNode.text, valueNode, analysis);
                         }
                     }
                 }
-                if (foundStart && braceCount === 0) break;
             }
 
-            // Extract function body
-            const functionBody = lines.slice(startLine, endLine + 1).join('\n');
-            
-            // Find function calls within this function
-            const callRegex = /(\w+)\s*\(/g;
-            const calls: string[] = [];
-            let callMatch;
-            while ((callMatch = callRegex.exec(functionBody)) !== null) {
-                const calledFunction = callMatch[1];
-                if (calledFunction !== functionName && 
-                    !['if', 'for', 'while', 'switch', 'catch'].includes(calledFunction)) {
-                    calls.push(calledFunction);
-                }
+            // Recurse through children
+            for (const child of node.children) {
+                traverse(child);
             }
+        };
 
-            // Calculate basic complexity (number of decision points)
-            const complexity = (functionBody.match(/\b(if|for|while|case|catch|&&|\|\|)\b/g) || []).length;
-
-            // Extract parameters
-            const paramMatch = text.substring(startIndex).match(/\(([^)]*)\)/);
-            const params = paramMatch ? paramMatch[1].split(',').map(p => p.trim()).filter(p => p) : [];
-
-            analysis.functions.set(functionName, {
-                name: functionName,
-                displayName: functionName, // Add this line
-                startLine,
-                endLine,
-                calls: [...new Set(calls)],
-                calledBy: [],
-                params,
-                complexity,
-                fileName: analysis.fileName
-            });
-        }
-
-        // Build calledBy relationships
-        for (const [funcName, funcNode] of analysis.functions) {
-            for (const calledFunc of funcNode.calls) {
-                const targetFunc = [...analysis.functions.values()]
-                    .find(f => f.name === calledFunc);
-
-                if (targetFunc) {
-                    targetFunc.calledBy.push(funcName);
-                }
-            }
-        }
+        traverse(tree.rootNode);
     }
 
-    private analyzePython(text: string, analysis: CodeAnalysis): void {
-        const lines = text.split('\n');
-        
-        // Find imports
-        const importRegex = /(?:from\s+(\S+)\s+)?import\s+(.+)/g;
-        let match;
-        while ((match = importRegex.exec(text)) !== null) {
-            analysis.imports.push(match[1] || match[2]);
+    private processJavaScriptFunction(name: string, node: Parser.SyntaxNode, analysis: CodeAnalysis): void {
+        const startLine = node.startPosition.row;
+        const endLine = node.endPosition.row;
+
+        // Extract parameters
+        const params: string[] = [];
+        const paramsNode = node.childForFieldName('parameters');
+        if (paramsNode) {
+            this.extractParameters(paramsNode, params);
         }
 
-        // Find functions
-        const functionRegex = /def\s+(\w+)\s*\(([^)]*)\)/g;
-        
-        while ((match = functionRegex.exec(text)) !== null) {
-            const functionName = match[1];
-            const params = match[2].split(',').map(p => p.trim()).filter(p => p);
-            
-            const startIndex = match.index;
-            const startLine = text.substring(0, startIndex).split('\n').length - 1;
-            
-            // Find function end (based on indentation)
-            let endLine = startLine;
-            const baseIndent = lines[startLine].search(/\S/);
-            
-            for (let i = startLine + 1; i < lines.length; i++) {
-                const line = lines[i].trim();
-                if (line === '') continue;
-                
-                const currentIndent = lines[i].search(/\S/);
-                if (currentIndent <= baseIndent && line !== '') {
-                    endLine = i - 1;
-                    break;
-                }
-                endLine = i;
-            }
+        // Extract function calls and calculate complexity
+        const calls = new Set<string>();
+        let complexity = 0;
 
-            const functionBody = lines.slice(startLine, endLine + 1).join('\n');
-            
-            // Find function calls
-            const callRegex = /(\w+)\s*\(/g;
-            const calls: string[] = [];
-            let callMatch;
-            while ((callMatch = callRegex.exec(functionBody)) !== null) {
-                const calledFunction = callMatch[1];
-                if (calledFunction !== functionName && 
-                    !['if', 'for', 'while', 'print', 'len', 'range'].includes(calledFunction)) {
-                    calls.push(calledFunction);
-                }
-            }
-
-            const complexity = (functionBody.match(/\b(if|for|while|elif|except|and|or)\b/g) || []).length;
-
-            analysis.functions.set(functionName, {
-                name: functionName,
-                displayName: functionName, // Add this line
-                startLine,
-                endLine,
-                calls: [...new Set(calls)],
-                calledBy: [],
-                params,
-                complexity,
-                fileName: analysis.fileName
-            });
+        const bodyNode = node.childForFieldName('body');
+        if (bodyNode) {
+            this.analyzeFunctionBody(bodyNode, name, calls, (c) => { complexity = c; });
         }
 
-        // Build calledBy relationships
-        for (const [funcName, funcNode] of analysis.functions) {
-            for (const calledFunc of funcNode.calls) {
-                const targetFunc = [...analysis.functions.values()]
-                    .find(f => f.name === calledFunc);
+        console.log(`[JS] Function: ${name}, Calls: [${Array.from(calls).join(', ')}], Complexity: ${complexity}`);
 
-                if (targetFunc) {
-                    targetFunc.calledBy.push(funcName);
-                }
-            }
-        }
+        analysis.functions.set(name, {
+            name,
+            displayName: name,
+            startLine,
+            endLine,
+            calls: Array.from(calls),
+            calledBy: [],
+            params,
+            complexity,
+            fileName: analysis.fileName
+        });
     }
 
-    private analyzeJava(text: string, analysis: CodeAnalysis): void {
-        const lines = text.split('\n');
-        
-        // Find imports
-        const importRegex = /import\s+([^;]+);/g;
-        let match;
-        while ((match = importRegex.exec(text)) !== null) {
-            analysis.imports.push(match[1]);
-        }
-
-        // Find methods
-        const methodRegex = /(?:public|private|protected)?\s*(?:static)?\s*\w+\s+(\w+)\s*\(([^)]*)\)/g;
-        
-        while ((match = methodRegex.exec(text)) !== null) {
-            const methodName = match[1];
-            if (['if', 'for', 'while', 'switch', 'catch'].includes(methodName)) continue;
-            
-            const params = match[2].split(',').map(p => p.trim()).filter(p => p);
-            const startIndex = match.index;
-            const startLine = text.substring(0, startIndex).split('\n').length - 1;
-            
-            // Find method end
-            let braceCount = 0;
-            let foundStart = false;
-            let endLine = startLine;
-            
-            for (let i = startLine; i < lines.length; i++) {
-                const line = lines[i];
-                for (const char of line) {
-                    if (char === '{') {
-                        braceCount++;
-                        foundStart = true;
-                    } else if (char === '}') {
-                        braceCount--;
-                        if (foundStart && braceCount === 0) {
-                            endLine = i;
-                            break;
-                        }
+    private analyzePython(tree: Parser.Tree, analysis: CodeAnalysis): void {
+        const traverse = (node: Parser.SyntaxNode) => {
+            // Extract imports
+            if (node.type === 'import_statement' || node.type === 'import_from_statement') {
+                if (node.type === 'import_from_statement') {
+                    const moduleNode = node.childForFieldName('module_name');
+                    if (moduleNode) {
+                        analysis.imports.push(moduleNode.text);
                     }
+                } else {
+                    analysis.imports.push(node.text.replace('import', '').trim());
                 }
-                if (foundStart && braceCount === 0) break;
             }
 
-            const methodBody = lines.slice(startLine, endLine + 1).join('\n');
+            // Function definitions
+            if (node.type === 'function_definition') {
+                const nameNode = node.childForFieldName('name');
+                if (nameNode) {
+                    this.processPythonFunction(nameNode.text, node, analysis);
+                }
+            }
+
+            // Recurse through children
+            for (const child of node.children) {
+                traverse(child);
+            }
+        };
+
+        traverse(tree.rootNode);
+    }
+
+    private processPythonFunction(name: string, node: Parser.SyntaxNode, analysis: CodeAnalysis): void {
+        const startLine = node.startPosition.row;
+        const endLine = node.endPosition.row;
+
+        // Extract parameters
+        const params: string[] = [];
+        const paramsNode = node.childForFieldName('parameters');
+        if (paramsNode) {
+            this.extractParameters(paramsNode, params);
+        }
+
+        // Extract function calls and calculate complexity
+        const calls = new Set<string>();
+        let complexity = 0;
+
+        const bodyNode = node.childForFieldName('body');
+        if (bodyNode) {
+            this.analyzeFunctionBody(bodyNode, name, calls, (c) => { complexity = c; }, true);
+        }
+
+        console.log(`[PY] Function: ${name}, Calls: [${Array.from(calls).join(', ')}], Complexity: ${complexity}`);
+
+        analysis.functions.set(name, {
+            name,
+            displayName: name,
+            startLine,
+            endLine,
+            calls: Array.from(calls),
+            calledBy: [],
+            params,
+            complexity,
+            fileName: analysis.fileName
+        });
+    }
+
+    private analyzeJava(tree: Parser.Tree, analysis: CodeAnalysis): void {
+        const traverse = (node: Parser.SyntaxNode) => {
+            // Extract imports
+            if (node.type === 'import_declaration') {
+                analysis.imports.push(node.text.replace('import', '').replace(';', '').trim());
+            }
+
+            // Method declarations
+            if (node.type === 'method_declaration' || node.type === 'constructor_declaration') {
+                const nameNode = node.childForFieldName('name');
+                if (nameNode && !this.isJavaKeyword(nameNode.text)) {
+                    this.processJavaMethod(nameNode.text, node, analysis);
+                }
+            }
+
+            // Recurse through children
+            for (const child of node.children) {
+                traverse(child);
+            }
+        };
+
+        traverse(tree.rootNode);
+    }
+
+    private processJavaMethod(name: string, node: Parser.SyntaxNode, analysis: CodeAnalysis): void {
+        const startLine = node.startPosition.row;
+        const endLine = node.endPosition.row;
+
+        // Extract parameters
+        const params: string[] = [];
+        const paramsNode = node.childForFieldName('parameters');
+        if (paramsNode) {
+            this.extractParameters(paramsNode, params);
+        }
+
+        // Extract method calls and calculate complexity
+        const calls = new Set<string>();
+        let complexity = 0;
+
+        const bodyNode = node.childForFieldName('body');
+        if (bodyNode) {
+            this.analyzeFunctionBody(bodyNode, name, calls, (c) => { complexity = c; });
+        }
+
+        analysis.functions.set(name, {
+            name,
+            displayName: name,
+            startLine,
+            endLine,
+            calls: Array.from(calls),
+            calledBy: [],
+            params,
+            complexity,
+            fileName: analysis.fileName
+        });
+    }
+
+    private extractParameters(paramsNode: Parser.SyntaxNode, params: string[]): void {
+        const extractRecursive = (node: Parser.SyntaxNode) => {
+            // Handle different parameter node types
+            if (node.type === 'identifier') {
+                if (!params.includes(node.text)) {
+                    params.push(node.text);
+                }
+                return; // Don't recurse into identifiers
+            }
             
-            const callRegex = /(\w+)\s*\(/g;
-            const calls: string[] = [];
-            let callMatch;
-            while ((callMatch = callRegex.exec(methodBody)) !== null) {
-                const calledMethod = callMatch[1];
-                if (calledMethod !== methodName && 
-                    !['if', 'for', 'while', 'switch', 'catch'].includes(calledMethod)) {
-                    calls.push(calledMethod);
+            if (node.type === 'property_identifier') {
+                if (!params.includes(node.text)) {
+                    params.push(node.text);
+                }
+                return;
+            }
+            
+            // TypeScript/Java typed parameters
+            if (node.type === 'typed_parameter' || node.type === 'required_parameter' || node.type === 'optional_parameter') {
+                const nameChild = node.childForFieldName('name') || node.childForFieldName('pattern');
+                if (nameChild && nameChild.type === 'identifier' && !params.includes(nameChild.text)) {
+                    params.push(nameChild.text);
+                }
+                return;
+            }
+            
+            // Java formal parameters
+            if (node.type === 'formal_parameter') {
+                const nameChild = node.childForFieldName('name');
+                if (nameChild && !params.includes(nameChild.text)) {
+                    params.push(nameChild.text);
+                }
+                return;
+            }
+
+            // Python parameters
+            if (node.type === 'parameter' || node.type === 'typed_parameter' || node.type === 'typed_default_parameter') {
+                const nameChild = node.childForFieldName('name');
+                if (nameChild && !params.includes(nameChild.text)) {
+                    params.push(nameChild.text);
+                }
+                return;
+            }
+            
+            // Recurse for other node types
+            for (const child of node.children) {
+                extractRecursive(child);
+            }
+        };
+
+        extractRecursive(paramsNode);
+    }
+
+    private analyzeFunctionBody(
+        bodyNode: Parser.SyntaxNode,
+        functionName: string,
+        calls: Set<string>,
+        setComplexity: (c: number) => void,
+        isPython: boolean = false
+    ): void {
+        let complexity = 0;
+        // More minimal builtin lists - only filter obvious keywords
+        const pythonKeywords = ['if', 'for', 'while'];
+        const jsKeywords = ['if', 'for', 'while', 'switch', 'catch'];
+
+        const traverse = (node: Parser.SyntaxNode) => {
+            // Calculate complexity
+            if (this.complexityNodeTypes.has(node.type)) {
+                complexity++;
+            }
+
+            // Check for logical operators (&&, ||, and, or)
+            if (node.type === 'binary_expression') {
+                const operator = node.children[1]?.text;
+                if (['&&', '||', 'and', 'or'].includes(operator)) {
+                    complexity++;
                 }
             }
 
-            const complexity = (methodBody.match(/\b(if|for|while|case|catch|&&|\|\|)\b/g) || []).length;
+            // Extract function/method calls
+            // Python uses 'call', JavaScript uses 'call_expression', Java uses 'method_invocation'
+            if (node.type === 'call_expression' || node.type === 'call' || node.type === 'method_invocation') {
+                let calleeName = '';
 
-            analysis.functions.set(methodName, {
-                name: methodName,
-                displayName: methodName, // Add this line
-                startLine,
-                endLine,
-                calls: [...new Set(calls)],
-                calledBy: [],
-                params,
-                complexity,
-                fileName: analysis.fileName
-            });
-        }
+                const funcNode = node.childForFieldName('function');
+                const nameNode = node.childForFieldName('name');
 
-        // Build calledBy relationships
-        for (const [funcName, funcNode] of analysis.functions) {
-            for (const calledFunc of funcNode.calls) {
-                const targetFunc = [...analysis.functions.values()]
-                    .find(f => f.name === calledFunc);
+                if (funcNode) {
+                    // Handle member expressions (obj.method) or attribute access (obj.method in Python)
+                    if (funcNode.type === 'member_expression' || funcNode.type === 'attribute') {
+                        const propertyNode = funcNode.childForFieldName('property') || funcNode.childForFieldName('attribute');
+                        calleeName = propertyNode?.text || '';
+                    } else if (funcNode.type === 'identifier') {
+                        calleeName = funcNode.text;
+                    } else {
+                        // Fallback - just get the text
+                        calleeName = funcNode.text;
+                    }
+                } else if (nameNode) {
+                    calleeName = nameNode.text;
+                }
 
-                if (targetFunc) {
-                    targetFunc.calledBy.push(funcName);
+                // Filter out current function and keywords only
+                if (calleeName && 
+                    calleeName !== functionName && 
+                    !(isPython ? pythonKeywords : jsKeywords).includes(calleeName)) {
+                    calls.add(calleeName);
+                }
+            }
+
+            // Recurse through children
+            for (const child of node.children) {
+                traverse(child);
+            }
+        };
+
+        traverse(bodyNode);
+        setComplexity(complexity);
+    }
+
+    private buildCalledByRelationships(analysis: CodeAnalysis): void {
+        // Convert to array to avoid issues with iterating while modifying
+        const allFunctions = Array.from(analysis.functions.values());
+        
+        console.log(`Building relationships for ${allFunctions.length} functions`);
+        
+        for (const func of allFunctions) {
+            for (const calledName of func.calls) {
+                const targetFunc = allFunctions.find(f => f.name === calledName);
+                if (targetFunc && !targetFunc.calledBy.includes(func.name)) {
+                    targetFunc.calledBy.push(func.name);
+                    console.log(`  ${func.name} -> ${calledName}`);
                 }
             }
         }
+        
+        console.log('Relationship building complete');
+    }
+
+    private isJavaKeyword(name: string): boolean {
+        const keywords = ['if', 'for', 'while', 'switch', 'catch'];
+        return keywords.includes(name);
     }
 
     private analyzeGeneric(text: string, analysis: CodeAnalysis): void {
-        // Basic pattern matching for unknown languages
+        // Fallback for unsupported languages - minimal implementation
         const functionRegex = /function\s+(\w+)|def\s+(\w+)|(\w+)\s*\([^)]*\)\s*{/g;
         let match;
-        
+
         while ((match = functionRegex.exec(text)) !== null) {
             const functionName = match[1] || match[2] || match[3];
             if (!functionName) continue;
-            
+
             const startLine = text.substring(0, match.index).split('\n').length - 1;
-            
+
             analysis.functions.set(functionName, {
                 name: functionName,
-                displayName: functionName, // Add this line
+                displayName: functionName,
                 startLine,
-                endLine: startLine + 10, // Estimate
+                endLine: startLine + 10,
                 calls: [],
                 calledBy: [],
                 params: [],
                 complexity: 0,
-                fileName: analysis.fileName // Store the file name
+                fileName: analysis.fileName
             });
         }
     }
+
     mergeAnalyses(analyses: CodeAnalysis[]): CodeAnalysis {
         const merged: CodeAnalysis = {
             fileName: 'Workspace Analysis',
@@ -347,11 +505,11 @@ export class CodeAnalyzer {
         // First pass: add all functions with unique keys
         for (const analysis of analyses) {
             const fileLabel = analysis.fileName.split('/').pop() || analysis.fileName;
-            
+
             for (const [name, func] of analysis.functions) {
                 const uniqueKey = `${name}::${fileLabel}`;
-                
-                merged.functions.set(uniqueKey, { 
+
+                merged.functions.set(uniqueKey, {
                     ...func,
                     name: uniqueKey,  // Unique identifier
                     displayName: name, // Original function name for display
@@ -367,11 +525,11 @@ export class CodeAnalyzer {
         // Second pass: update call relationships to use unique keys
         for (const analysis of analyses) {
             const fileLabel = analysis.fileName.split('/').pop() || analysis.fileName;
-            
+
             for (const [name, func] of analysis.functions) {
                 const uniqueKey = `${name}::${fileLabel}`;
                 const mergedFunc = merged.functions.get(uniqueKey);
-                
+
                 if (mergedFunc) {
                     // Update calls to use unique keys
                     mergedFunc.calls = func.calls.map(calledName => {
@@ -380,18 +538,18 @@ export class CodeAnalyzer {
                         if (merged.functions.has(sameFileKey)) {
                             return sameFileKey;
                         }
-                        
+
                         // Otherwise find any function with this base name
                         for (const [key] of merged.functions) {
                             if (key.startsWith(calledName + '::')) {
                                 return key;
                             }
                         }
-                        
+
                         // If not found, return original (might be external)
                         return calledName;
                     });
-                    
+
                     mergedFunc.calledBy = [];
                 }
             }
