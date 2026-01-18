@@ -3,7 +3,7 @@
   "displayName": "Code Flow Visualizer",
   "description": "Visualize code structure and function call relationships in real-time",
   "version": "0.0.1",
-  "icon":"CodeFlowIcon.png",
+  "icon": "CodeFlowIcon.png",
   "publisher": "codeflowio",
   "galleryBanner.color": {
     "color": "21214c",
