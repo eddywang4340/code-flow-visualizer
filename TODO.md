@@ -1,16 +1,6 @@
-- Switch to AST (from REGEX) - Kevin
-- Description block (AI stuff) - Kevin
-    - It says number of functions that are calling it (we should specify which functions specifically maybe a drop down)
-    - Complexity?? What does this mean. Maybe we could put it to time complexity or space complexity
-        - Update: Complexity currently just counts decision points ie. if, while, case, for and other such statements 
-        - Potentially switch to use analyze runtime with LLM which can be activated on button press
-    - Generate description of the function
-    - Cache the resulst of the LLM (unless the code changes)
-- When analyzing workspace, we want to cluster functions of the same files (easier for visual users) - Eddy
-- Make sure functions of other files take you to that other file (file navigation functionality) - Jamie
+- Cache the resulst of the LLM (unless the code changes)
 - Investigate whether we can do the vice versa (we click on a function name in the code and that takes us to the respective node in the extension)
-- If there are no nodes to display, it should say something like "No nodes to show"
 - Add info button (how to use the extension)
-    - We need to add instructions at the beginning
+- We need to add instructions at the beginning
 - Add loading states (UI stuff) - later thing
 
