@@ -108,7 +108,10 @@ export class FlowVisualizer {
         if (fileName && (!editor || editor.document.fileName !== fileName)) {
             try {
                 const document = await vscode.workspace.openTextDocument(fileName);
-                editor = await vscode.window.showTextDocument(document, vscode.ViewColumn.One);
+                editor = await vscode.window.showTextDocument(document, {
+                    viewColumn: vscode.ViewColumn.One,
+                    preserveFocus: true // This is the key setting
+                });
             } catch (error) {
                 vscode.window.showErrorMessage(`Could not open file: ${fileName}`);
                 return;
@@ -596,9 +599,10 @@ export class FlowVisualizer {
                 blockG.appendChild(rect);
 
                 // IMPROVED: Extract and truncate filename intelligently
-                const fileNameOnly = fileName.split(/[\\/]/).pop() || fileName;
+                const fileNameOnly = fileName.split('\\\\').at(-1);
                 let displayName = fileNameOnly;
-                if (displayName.length > 28) {
+                console.logIdispla
+                if (displayName.length > 28) {  
                     const ext = displayName.split('.').pop();
                     const nameWithoutExt = displayName.substring(0, displayName.lastIndexOf('.'));
                     if (ext && nameWithoutExt.length > 20) {
