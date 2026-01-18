@@ -221,58 +221,9 @@ export class FlowVisualizer {
         <div id="zoom-indicator" class="zoom-indicator"></div>
     </div>
 
-    ${this._getVisualizationScript()}
+    ${this._getFullVisualizationScript()}
 </body>
 </html>`;
-    }
-
-    private _getVisualizationScript(): string {
-        // This is a condensed version - you can split this further into modules if needed
-        return `<script>
-        const vscode = acquireVsCodeApi();
-        let currentData = null;
-        let currentLayout = 'force';
-        let scale = 1;
-        let autoNavigate = true;
-        let translateX = 0;
-        let translateY = 0;
-        let isPanning = false;
-        let panStartX = 0;
-        let panStartY = 0;
-        let isDraggingNode = false;
-        let draggedNodeIndex = -1;
-        let nodePositions = [];
-        let svgElement = null;
-        let gElement = null;
-        let isWorkspaceMode = false;
-        let fileClusters = new Map();
-        let clusterBounds = new Map();
-        const ZOOM_THRESHOLD = 1.5;
-        let expandedFiles = new Set();
-
-        window.addEventListener('message', event => {
-            const message = event.data;
-            if (message.command === 'updateData') {
-                currentData = message.data;
-                renderVisualization();
-            }
-        });
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const toggle = document.getElementById('nav-mode-toggle');
-            if (toggle) {
-                toggle.addEventListener('change', () => {
-                    autoNavigate = toggle.checked;
-                });
-            }
-        });
-
-        // ... [Rest of the visualization script - I'll continue in next message]
-        // For now, I'm showing the structure - you can keep your existing script here
-        // or we can split it into more modules
-        
-        ${this._getFullVisualizationScript()}
-    </script>`;
     }
 
     private _getFullVisualizationScript(): string {

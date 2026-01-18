@@ -30,6 +30,10 @@
       {
         "command": "codeFlowVisualizer.analyzeWorkspace",
         "title": "Code Flow: Analyze Entire Workspace"
+      },
+      {
+        "command": "codeFlowVisualizer.resetWelcome",
+        "title": "Code Flow: Reset Welcome Screen"
       }
     ],
     "keybindings": [
