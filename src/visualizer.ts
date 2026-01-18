@@ -1387,25 +1387,31 @@ export class FlowVisualizer {
                 e.preventDefault();
                 const oldScale = scale;
                 const delta = e.deltaY > 0 ? 0.95 : 1.05;
-                scale *= delta;
-                scale = Math.max(0.1, Math.min(5, scale));
+                const newScale = Math.max(0.1, Math.min(5, oldScale * delta));
                 
-                // FIX: Use global gElement
+                // Get mouse position in screen coordinates
+                const rect = svg.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                // Adjust translation to zoom toward mouse cursor
+                translateX = mouseX - (mouseX - translateX) * (newScale / oldScale);
+                translateY = mouseY - (mouseY - translateY) * (newScale / oldScale);
+                
+                scale = newScale;
+                
                 if (gElement) {
                     gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
                 }
 
-                if (isWorkspaceMode && currentLayout === 'force') {
+                if (isWorkspaceMode && currentLayout === 'force' && expandedFiles.size === 0) {
                     const wasBelow = oldScale <= ZOOM_THRESHOLD;
                     const isAbove = scale > ZOOM_THRESHOLD;
                     
-                    if (expandedFiles.size === 0) {
-                        if (wasBelow && isAbove) {
-                            expandedFiles.clear();
-                            renderVisualization();
-                        } else if (!wasBelow && !isAbove) {
-                            renderVisualization();
-                        }
+                    if (wasBelow && isAbove) {
+                        renderVisualization();
+                    } else if (!wasBelow && !isAbove) {
+                        renderVisualization();
                     }
                 }
                 
@@ -1442,12 +1448,25 @@ export class FlowVisualizer {
 
         function zoomIn() {
             const oldScale = scale;
-            scale *= 1.2;
+            const newScale = oldScale * 1.2;
+            
+            // Get canvas center in screen coordinates
+            const canvas = document.getElementById('canvas');
+            const rect = canvas.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+            
+            // Adjust translation to zoom toward center
+            translateX = centerX - (centerX - translateX) * (newScale / oldScale);
+            translateY = centerY - (centerY - translateY) * (newScale / oldScale);
+            
+            scale = newScale;
+            
             if (gElement) {
                 gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
             }
 
-            // Check threshold crossing
+            // Check threshold crossing only if no file is explicitly selected
             if (isWorkspaceMode && currentLayout === 'force' && expandedFiles.size === 0) {
                 const wasBelow = oldScale <= ZOOM_THRESHOLD;
                 const isAbove = scale > ZOOM_THRESHOLD;
@@ -1462,12 +1481,25 @@ export class FlowVisualizer {
 
         function zoomOut() {
             const oldScale = scale;
-            scale *= 0.8;
+            const newScale = oldScale * 0.8;
+            
+            // Get canvas center in screen coordinates
+            const canvas = document.getElementById('canvas');
+            const rect = canvas.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+            
+            // Adjust translation to zoom toward center
+            translateX = centerX - (centerX - translateX) * (newScale / oldScale);
+            translateY = centerY - (centerY - translateY) * (newScale / oldScale);
+            
+            scale = newScale;
+            
             if (gElement) {
                 gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
             }
 
-            // Check threshold crossing
+            // Check threshold crossing only if no file is explicitly selected
             if (isWorkspaceMode && currentLayout === 'force' && expandedFiles.size === 0) {
                 const wasAbove = oldScale > ZOOM_THRESHOLD;
                 const isBelow = scale <= ZOOM_THRESHOLD;
@@ -1478,7 +1510,7 @@ export class FlowVisualizer {
             }
             
             updateLayoutDescription();
-        }
+}
         initializeGlobalEvents();
         // Initial render
         renderVisualization();
