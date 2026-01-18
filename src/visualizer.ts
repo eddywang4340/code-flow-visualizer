@@ -637,24 +637,30 @@ export class FlowVisualizer {
             // Determine which files to show
             const filesToShow = expandedFiles.size > 0 ? expandedFiles : new Set(fileClusters.keys());
 
-            // Draw links for visible functions
+           // Draw links
             functions.forEach((func, i) => {
+                // Skip drawing links from hidden nodes (matches your existing logic)
                 if (positions[i].x < -1000) return;
-                if (!filesToShow.has(func.fileName)) return;
-                
+
                 func.calls.forEach(calledFunc => {
                     const targetIndex = functions.findIndex(f => f.name === calledFunc);
+                    
+                    // Skip hidden targets
                     if (targetIndex !== -1 && positions[targetIndex].x > -1000) {
-                        const targetFunc = functions[targetIndex];
-                        if (filesToShow.has(targetFunc.fileName)) {
-                            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                            line.setAttribute('class', 'link');
-                            line.setAttribute('x1', positions[i].x);
-                            line.setAttribute('y1', positions[i].y);
-                            line.setAttribute('x2', positions[targetIndex].x);
-                            line.setAttribute('y2', positions[targetIndex].y);
-                            g.appendChild(line);
-                        }
+                        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        line.setAttribute('class', 'link');
+                        
+                        // --- ADD THESE TWO LINES ---
+                        line.setAttribute('data-source-index', i.toString());
+                        line.setAttribute('data-target-index', targetIndex.toString());
+                        // ---------------------------
+
+                        line.setAttribute('x1', positions[i].x);
+                        line.setAttribute('y1', positions[i].y);
+                        line.setAttribute('x2', positions[targetIndex].x);
+                        line.setAttribute('y2', positions[targetIndex].y);
+                        line.setAttribute('data-link', 'true');
+                        g.appendChild(line);
                     }
                 });
             });
@@ -934,11 +940,13 @@ export class FlowVisualizer {
         function updateNodePositions() {
             if (!gElement || !currentData) return;
 
-            const functions = Object.values(currentData.functions);
-            
+            // 1. Update Nodes (using the data-node-index fix from before)
             const nodes = gElement.querySelectorAll('.node');
-            nodes.forEach((nodeG, i) => {
-                if (i < nodePositions.length) {
+            nodes.forEach((nodeG) => {
+                const indexStr = nodeG.getAttribute('data-node-index');
+                const i = indexStr ? parseInt(indexStr) : -1;
+
+                if (i >= 0 && i < nodePositions.length) {
                     const circle = nodeG.querySelector('circle');
                     const text = nodeG.querySelector('text');
                     
@@ -953,19 +961,26 @@ export class FlowVisualizer {
                 }
             });
 
+            // 2. Update Links (NEW: Use data attributes for direct lookup)
             const links = gElement.querySelectorAll('.link');
-            let linkIndex = 0;
-            functions.forEach((func, i) => {
-                func.calls.forEach(calledFunc => {
-                    const targetIndex = functions.findIndex(f => f.name === calledFunc);
-                    if (targetIndex !== -1 && links[linkIndex]) {
-                        links[linkIndex].setAttribute('x1', nodePositions[i].x);
-                        links[linkIndex].setAttribute('y1', nodePositions[i].y);
-                        links[linkIndex].setAttribute('x2', nodePositions[targetIndex].x);
-                        links[linkIndex].setAttribute('y2', nodePositions[targetIndex].y);
-                        linkIndex++;
+            links.forEach(line => {
+                // Read the indices we saved during render
+                const sourceIdx = parseInt(line.getAttribute('data-source-index'));
+                const targetIdx = parseInt(line.getAttribute('data-target-index'));
+
+                // Check if we have valid numbers
+                if (!isNaN(sourceIdx) && !isNaN(targetIdx)) {
+                    const sourcePos = nodePositions[sourceIdx];
+                    const targetPos = nodePositions[targetIdx];
+
+                    // Safety check to ensure positions exist
+                    if (sourcePos && targetPos) {
+                        line.setAttribute('x1', sourcePos.x);
+                        line.setAttribute('y1', sourcePos.y);
+                        line.setAttribute('x2', targetPos.x);
+                        line.setAttribute('y2', targetPos.y);
                     }
-                });
+                }
             });
         }
 
