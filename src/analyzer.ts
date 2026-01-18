@@ -475,7 +475,7 @@ export class CodeAnalyzer {
         };
 
         for (const analysis of analyses) {
-            const fileLabel = analysis.fileName.split(/[/\\]/).pop() || analysis.fileName;
+            const fileLabel = analysis.fileName.split('/').pop() || analysis.fileName;
 
             for (const [name, func] of analysis.functions) {
                 const uniqueKey = `${name}::${fileLabel}`;
