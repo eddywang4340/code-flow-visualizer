@@ -677,12 +677,12 @@ export class FlowVisualizer {
            // Draw links
             functions.forEach((func, i) => {
                 // Skip drawing links from hidden nodes (matches your existing logic)
-                if (positions[i].x < -1000) return;
+                if (positions[i].x < -1000 || !filesToShow.has(func.fileName)) return;
 
                 func.calls.forEach(calledFunc => {
                     const targetIndex = functions.findIndex(f => f.name === calledFunc);
                     const targetFunc = functions[targetIndex];
-                    
+
                     // Skip hidden targets
                     if (targetIndex !== -1 && 
                         positions[targetIndex].x > -1000 && 
