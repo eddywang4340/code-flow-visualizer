@@ -70,39 +70,39 @@ export class FlowVisualizer {
                             this._updateContent();
                         }
                         break;
-                        case 'analyzeComplexity':
-                            // Call your LLM here
-                            try {
-                                const response = await fetch('http://127.0.0.1:8000/analyze', {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                    },
-                                    body: JSON.stringify({ 
-                                        code: message.code 
-                                    })
-                                });
+                    case 'analyzeComplexity':
+                        // Call your LLM here
+                        try {
+                            const response = await fetch('http://127.0.0.1:8000/analyze', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({ 
+                                    code: message.code 
+                                })
+                            });
 
-                                if (!response.ok) {
-                                    throw new Error(`Backend error: ${response.statusText}`);
-                                }
-
-                                const result: any = await response.json();
-                                
-                                // Send result back to WebView
-                                this._panel.webview.postMessage({
-                                    command: 'updateComplexity',
-                                    complexity: result.bigO || "Unknown", // Fallback if undefined
-                                    description: result.description || "Unknown"
-                                });
-                            } catch (err: any) {
-                                vscode.window.showErrorMessage(`LLM Analysis failed: ${err.message}`);
-                                this._panel.webview.postMessage({
-                                    command: 'updateComplexity',
-                                    complexity: "Error" // Update UI to show error state
-                                });
+                            if (!response.ok) {
+                                throw new Error(`Backend error: ${response.statusText}`);
                             }
-                            break;
+
+                            const result: any = await response.json();
+                            
+                            // Send result back to WebView
+                            this._panel.webview.postMessage({
+                                command: 'updateComplexity',
+                                complexity: result.bigO || "Unknown",
+                                description: result.description || "Unknown"
+                            });
+                        } catch (err: any) {
+                            vscode.window.showErrorMessage(`LLM Analysis failed: ${err.message}`);
+                            this._panel.webview.postMessage({
+                                command: 'updateComplexity',
+                                complexity: "Error"
+                            });
+                        }
+                        break;
                 }
             },
             null,
@@ -239,28 +239,200 @@ export class FlowVisualizer {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Code Flow Visualizer</title>
     <style>${getWebviewStyles()}</style>
+    <style>
+        /* Additional styles for tools menu and zoom indicator */
+        .tools-menu {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+
+        .tools-toggle {
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 10px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .tools-toggle:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+
+        .tools-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 8px;
+            background-color: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 6px;
+            padding: 8px;
+            min-width: 180px;
+            display: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .tools-dropdown.show {
+            display: block;
+        }
+
+        .tools-section {
+            margin-bottom: 12px;
+        }
+
+        .tools-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .tools-section-title {
+            font-size: 10px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .tools-dropdown button {
+            width: 100%;
+            text-align: left;
+            margin-bottom: 4px;
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+
+        .tools-dropdown button:last-child {
+            margin-bottom: 0;
+        }
+
+        .zoom-indicator {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            padding: 6px 14px;
+            border-radius: 14px;
+            font-size: 12px;
+            font-weight: 600;
+            z-index: 1001;
+            border: 1px solid var(--vscode-panel-border);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            pointer-events: none;
+            flex-shrink: 0;
+        }
+
+        #controls {
+            padding: 10px 20px;
+            margin-bottom: 0;
+        }
+
+        .info-panel {
+            max-width: 260px;
+            padding: 14px;
+        }
+
+        .info-panel h3 {
+            font-size: 15px;
+            margin-bottom: 10px;
+        }
+
+        .info-panel li {
+            margin: 7px 0;
+            font-size: 12px;
+        }
+
+        /* Simplified node styling */
+        .node circle {
+            transition: filter 0.2s, stroke-width 0.2s;
+        }
+
+        .node:hover circle {
+            filter: brightness(1.2);
+            stroke: white;
+            stroke-width: 2px;
+        }
+
+        /* Improved file blocks */
+        .file-block {
+            fill: rgba(59, 130, 246, 0.06);
+            stroke: rgba(59, 130, 246, 0.3);
+            stroke-width: 2;
+            transition: all 0.2s ease;
+        }
+
+        .file-block:hover {
+            fill: rgba(59, 130, 246, 0.12);
+            stroke: rgba(59, 130, 246, 0.6);
+            stroke-width: 2.5;
+        }
+
+        .file-block-label {
+            fill: var(--vscode-foreground);
+            font-size: 13px;
+            font-weight: 600;
+            pointer-events: none;
+        }
+
+        .file-block-count {
+            fill: var(--vscode-descriptionForeground);
+            font-size: 11px;
+            pointer-events: none;
+        }
+
+        .file-block-hint {
+            fill: var(--vscode-textLink-foreground);
+            font-size: 10px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .file-block-group:hover .file-block-hint {
+            opacity: 1;
+        }
+    </style>
 </head>
 <body>
     <div id="container">
         <div id="controls">
-            <button onclick="resetView()">Reset View</button>
-            <button onclick="toggleLayout()">Change Layout</button>
-            <button onclick="zoomIn()">Zoom In</button>
-            <button onclick="zoomOut()">Zoom Out</button>
-
-            <label style="margin-left: 20px; font-size: 12px;">
+            <label style="font-size: 12px;">
                 <input type="checkbox" id="nav-mode-toggle" checked />
                 Auto Navigate on Hover
             </label>
+            <button onClick=zoomIn() title="Zoom In" style="margin-left: 12px; font-size: 12px; padding: 4px 8px;"></button>
+            <button onClick=zoomOut() title="Zoom Out" style="margin-left: 4px; font-size: 12px; padding: 4px 8px;"></button>
 
-            <span id="layout-info">Force Layout</span>
-            <span id="layout-description">Showing all connected functions</span>
+            <span id="layout-info" style="margin-left: 20px; padding: 4px 10px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); border-radius: 3px; font-size: 11px; font-weight: 600;">Force Layout</span>
+            <span id="layout-description" style="margin-left: 12px; font-size: 11px; color: var(--vscode-descriptionForeground);">Showing all connected functions</span>
         </div>
+        
+        <!-- Tools Menu -->
+        <div class="tools-menu">
+            <button class="tools-toggle" onclick="toggleToolsMenu()">
+                <span>⚙️</span>
+                <span>Tools</span>
+            </button>
+            <div class="tools-dropdown" id="tools-dropdown">
+                <div class="tools-section">
+                    <button onclick="resetView(); closeToolsMenu();">Reset View</button>
+                    <button onclick="toggleLayout(); closeToolsMenu();">Change Layout</button>
+                </div>
+            </div>
+        </div>
+
         <div id="canvas">
             <svg id="main-svg"></svg>
         </div>
         <div id="info-panel" class="info-panel"></div>
-        <div id="zoom-indicator" class="zoom-indicator"></div>
+        <div id="zoom-indicator" class="zoom-indicator">100%</div>
     </div>
     <script>
     ${this._getFullVisualizationScript()}
@@ -270,9 +442,6 @@ export class FlowVisualizer {
     }
 
     private _getFullVisualizationScript(): string {
-        // Return the complete visualization script from the original visualizer
-        // This is where all your existing JavaScript logic goes
-        // I'll provide a placeholder - you can copy the script from your current visualizer.ts
         return `
         const vscode = acquireVsCodeApi();
         let currentData = null;
@@ -291,14 +460,38 @@ export class FlowVisualizer {
         let gElement = null;
         let isWorkspaceMode = false;
         let fileClusters = new Map();
-        let clusterBounds = new Map(); // Store cluster boundaries
+        let clusterBounds = new Map();
         
-        // Zoom threshold for showing detailed nodes
         const ZOOM_THRESHOLD = 1.5;
-        let expandedFiles = new Set(); // Track which files are manually expanded
+        let expandedFiles = new Set();
 
+        // Tools menu functions
+        function toggleToolsMenu() {
+            const dropdown = document.getElementById('tools-dropdown');
+            dropdown.classList.toggle('show');
+        }
 
-        // Handle auto-navigate toggle
+        function closeToolsMenu() {
+            const dropdown = document.getElementById('tools-dropdown');
+            dropdown.classList.remove('show');
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            const menu = document.querySelector('.tools-menu');
+            if (menu && !menu.contains(e.target)) {
+                closeToolsMenu();
+            }
+        });
+
+        // Update zoom indicator
+        function updateZoomIndicator() {
+            const indicator = document.getElementById('zoom-indicator');
+            if (indicator) {
+                indicator.textContent = Math.round(scale * 100) + '%';
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             const toggle = document.getElementById('nav-mode-toggle');
             toggle.addEventListener('change', () => {
@@ -306,7 +499,6 @@ export class FlowVisualizer {
             });
         });
 
-        // Handle window resize
         let resizeTimeout;
         window.addEventListener('resize', () => {
             clearTimeout(resizeTimeout);
@@ -332,7 +524,6 @@ export class FlowVisualizer {
                 const tPos = nodePositions[tIdx];
 
                 if (sPos && tPos) {
-                    // FIX: If either node is explicitly hidden by layout, hide the link
                     if (sPos.x < -1000 || tPos.x < -1000) {
                         line.style.display = 'none';
                         return;
@@ -372,7 +563,6 @@ export class FlowVisualizer {
             const width = rect.width;
             const height = rect.height;
 
-            // Clear existing content
             const svg = document.getElementById('main-svg');
             svg.innerHTML = '';
             svg.setAttribute('width', width);
@@ -399,7 +589,6 @@ export class FlowVisualizer {
                 return;
             }
 
-            // Detect workspace mode
             isWorkspaceMode = functions.some(f => f.fileName !== undefined);
 
             let positions;
@@ -417,7 +606,6 @@ export class FlowVisualizer {
                 nodePositions = positions;
             }
 
-            // Validate positions
             positions.forEach((pos, i) => {
                 if (isNaN(pos.x) || isNaN(pos.y) || pos.x === undefined || pos.y === undefined) {
                     pos.x = width / 2 + (Math.random() - 0.5) * 100;
@@ -425,19 +613,15 @@ export class FlowVisualizer {
                 }
             });
 
-            // Workspace mode with hierarchical zoom
             if (isWorkspaceMode && currentLayout === 'force') {
                 const showDetails = scale > ZOOM_THRESHOLD || expandedFiles.size > 0;
                 
                 if (showDetails) {
-                    // Detailed view: show nodes and links for expanded files
                     renderDetailedView(g, functions, positions);
                 } else {
-                    // Overview: show file blocks only
                     renderOverviewBlocks(g, functions, positions);
                 }
             } else {
-                // Original behavior for single file or hierarchical layout
                 renderStandardView(g, functions, positions);
             }
 
@@ -449,7 +633,6 @@ export class FlowVisualizer {
             fileClusters.clear();
             clusterBounds.clear();
             
-            // Group functions by file
             functions.forEach((func, i) => {
                 if (func.fileName && positions[i].x > -1000) {
                     if (!fileClusters.has(func.fileName)) {
@@ -459,11 +642,9 @@ export class FlowVisualizer {
                 }
             });
 
-            // Draw file blocks with improved styling
             fileClusters.forEach((nodes, fileName) => {
                 if (nodes.length === 0) return;
                 
-                // Calculate bounding box
                 let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
                 nodes.forEach(node => {
                     minX = Math.min(minX, node.pos.x);
@@ -472,10 +653,9 @@ export class FlowVisualizer {
                     maxY = Math.max(maxY, node.pos.y);
                 });
 
-                // IMPROVED: Better sizing with minimum dimensions
-                const MIN_WIDTH = 200;
-                const MIN_HEIGHT = 120;
-                const padding = 35;
+                const MIN_WIDTH = 180;
+                const MIN_HEIGHT = 100;
+                const padding = 30;
 
                 let width = Math.max(MIN_WIDTH, maxX - minX + 2 * padding);
                 let height = Math.max(MIN_HEIGHT, maxY - minY + 2 * padding);
@@ -490,22 +670,20 @@ export class FlowVisualizer {
                 };
                 clusterBounds.set(fileName, bounds);
 
-                // Create block group
                 const blockG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
                 blockG.setAttribute('class', 'file-block-group');
                 blockG.setAttribute('data-file-name', fileName);
 
-                // Draw rounded rectangle
                 const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
                 rect.setAttribute('class', 'file-block');
                 rect.setAttribute('x', bounds.x.toString());
                 rect.setAttribute('y', bounds.y.toString());
                 rect.setAttribute('width', bounds.width.toString());
                 rect.setAttribute('height', bounds.height.toString());
-                rect.setAttribute('rx', '12');
+                rect.setAttribute('rx', '8');
                 blockG.appendChild(rect);
 
-                // IMPROVED: Extract and truncate filename intelligently
+                // Extract filename from path - fix for hash names
                 const fileNameOnly = fileName.split('\\\\').at(-1);
                 let displayName = fileNameOnly;
                 if (displayName.length > 28) {  
@@ -518,62 +696,38 @@ export class FlowVisualizer {
                     }
                 }
 
-                // File name label - centered vertically in the block
                 const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 label.setAttribute('class', 'file-block-label');
                 label.setAttribute('x', (bounds.x + bounds.width / 2).toString());
-                label.setAttribute('y', (bounds.y + bounds.height / 2 - 5).toString());
+                label.setAttribute('y', (bounds.y + bounds.height / 2 - 8).toString());
                 label.setAttribute('text-anchor', 'middle');
                 label.setAttribute('dominant-baseline', 'middle');
                 label.textContent = displayName;
                 blockG.appendChild(label);
 
-                // Function count below filename
                 const count = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 count.setAttribute('class', 'file-block-count');
                 count.setAttribute('x', (bounds.x + bounds.width / 2).toString());
-                count.setAttribute('y', (bounds.y + bounds.height / 2 + 18).toString());
+                count.setAttribute('y', (bounds.y + bounds.height / 2 + 10).toString());
                 count.setAttribute('text-anchor', 'middle');
                 count.setAttribute('dominant-baseline', 'middle');
                 
-                // IMPROVED: Better function count display
                 const funcCount = nodes.length;
-                if (funcCount === 1) {
-                    count.textContent = '1 function';
-                } else if (funcCount < 10) {
-                    count.textContent = funcCount + ' functions';
-                } else {
-                    count.textContent = funcCount + ' functions';
-                }
+                count.textContent = funcCount === 1 ? '1 function' : funcCount + ' functions';
                 blockG.appendChild(count);
                 
-                // IMPROVED: Add hover effect hint
                 const hoverHint = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 hoverHint.setAttribute('class', 'file-block-hint');
                 hoverHint.setAttribute('x', (bounds.x + bounds.width / 2).toString());
-                hoverHint.setAttribute('y', (bounds.y + bounds.height - 15).toString());
+                hoverHint.setAttribute('y', (bounds.y + bounds.height - 12).toString());
                 hoverHint.setAttribute('text-anchor', 'middle');
-                hoverHint.setAttribute('fill', 'rgb(255, 255, 255, 0.4)');
-                hoverHint.setAttribute('font-size', '10px');
                 hoverHint.textContent = 'Click to expand';
                 blockG.appendChild(hoverHint);
                 
-                // Click handler to zoom into this file
                 blockG.style.cursor = 'pointer';
                 blockG.addEventListener('click', (e) => {
                     e.stopPropagation();
                     zoomToFile(fileName, bounds);
-                });
-
-                // IMPROVED: Add hover effect
-                blockG.addEventListener('mouseenter', () => {
-                    rect.style.strokeWidth = '3';
-                    rect.style.filter = 'brightness(1.2)';
-                });
-                
-                blockG.addEventListener('mouseleave', () => {
-                    rect.style.strokeWidth = '1.5';
-                    rect.style.filter = 'none';
                 });
 
                 g.appendChild(blockG);
@@ -581,19 +735,16 @@ export class FlowVisualizer {
         }
 
         function renderDetailedView(g, functions, positions) {
-            // Determine which files to show
             const filesToShow = expandedFiles.size > 0 ? expandedFiles : new Set(fileClusters.keys());
 
-           // Draw links
+            // Draw links
             functions.forEach((func, i) => {
-                // Skip drawing links from hidden nodes (matches your existing logic)
                 if (positions[i].x < -1000 || !filesToShow.has(func.fileName)) return;
 
                 func.calls.forEach(calledFunc => {
                     const targetIndex = functions.findIndex(f => f.name === calledFunc);
                     const targetFunc = functions[targetIndex];
 
-                    // Skip hidden targets
                     if (targetIndex !== -1 && 
                         positions[targetIndex].x > -1000 && 
                         targetFunc && 
@@ -602,18 +753,16 @@ export class FlowVisualizer {
                         line.setAttribute('class', 'link');
                         line.setAttribute('data-source-index', i.toString());
                         line.setAttribute('data-target-index', targetIndex.toString());
-
                         line.setAttribute('x1', positions[i].x);
                         line.setAttribute('y1', positions[i].y);
                         line.setAttribute('x2', positions[targetIndex].x);
                         line.setAttribute('y2', positions[targetIndex].y);
-                        line.setAttribute('data-link', 'true');
                         g.appendChild(line);
                     }
                 });
             });
 
-            // Draw nodes for visible functions
+            // Draw nodes - SIMPLIFIED STYLING
             functions.forEach((func, i) => {
                 if (positions[i].x < -1000) return;
                 if (!filesToShow.has(func.fileName)) return;
@@ -627,14 +776,14 @@ export class FlowVisualizer {
                 const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                 circle.setAttribute('cx', positions[i].x);
                 circle.setAttribute('cy', positions[i].y);
-                circle.setAttribute('r', (12 + func.complexity * 1.5).toString());
+                circle.setAttribute('r', (10 + func.complexity * 1.2).toString());
                 
                 if (func.complexity < 3) {
-                    circle.setAttribute('class', 'complexity-low');
+                    circle.setAttribute('fill', '#4CAF50');
                 } else if (func.complexity < 7) {
-                    circle.setAttribute('class', 'complexity-medium');
+                    circle.setAttribute('fill', '#FFC107');
                 } else {
-                    circle.setAttribute('class', 'complexity-high');
+                    circle.setAttribute('fill', '#FF5722');
                 }
                 
                 nodeG.appendChild(circle);
@@ -642,7 +791,7 @@ export class FlowVisualizer {
                 const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 text.setAttribute('class', 'node-text');
                 text.setAttribute('x', positions[i].x);
-                text.setAttribute('y', positions[i].y - 18);
+                text.setAttribute('y', positions[i].y - 16);
                 text.setAttribute('text-anchor', 'middle');
                 text.setAttribute('fill', 'var(--vscode-foreground)');
                 text.textContent = func.displayName && func.displayName.length > 15 
@@ -690,8 +839,6 @@ export class FlowVisualizer {
                     }
                 });
 
-
-                // Node dragging - mousedown on node
                 nodeG.addEventListener('mousedown', (e) => {
                     e.stopPropagation();
                     e.preventDefault();
@@ -725,7 +872,7 @@ export class FlowVisualizer {
                 });
             });
 
-            // Draw nodes
+            // Draw nodes - SIMPLIFIED STYLING
             functions.forEach((func, i) => {
                 if (positions[i].x < -1000) return;
                 
@@ -738,14 +885,14 @@ export class FlowVisualizer {
                 const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                 circle.setAttribute('cx', positions[i].x);
                 circle.setAttribute('cy', positions[i].y);
-                circle.setAttribute('r', (12 + func.complexity * 1.5).toString());
+                circle.setAttribute('r', (10 + func.complexity * 1.2).toString());
                 
                 if (func.complexity < 3) {
-                    circle.setAttribute('class', 'complexity-low');
+                    circle.setAttribute('fill', '#4CAF50');
                 } else if (func.complexity < 7) {
-                    circle.setAttribute('class', 'complexity-medium');
+                    circle.setAttribute('fill', '#FFC107');
                 } else {
-                    circle.setAttribute('class', 'complexity-high');
+                    circle.setAttribute('fill', '#FF5722');
                 }
                 
                 nodeG.appendChild(circle);
@@ -753,12 +900,12 @@ export class FlowVisualizer {
                 const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 text.setAttribute('class', 'node-text');
                 text.setAttribute('x', positions[i].x);
-                text.setAttribute('y', positions[i].y - 18);
+                text.setAttribute('y', positions[i].y - 16);
                 text.setAttribute('text-anchor', 'middle');
                 text.setAttribute('fill', 'var(--vscode-foreground)');
                 text.textContent = func.displayName && func.displayName.length > 15 
-                ? func.displayName.substring(0, 12) + '...' 
-                : (func.displayName || func.name);
+                    ? func.displayName.substring(0, 12) + '...' 
+                    : (func.displayName || func.name);
                 nodeG.appendChild(text);
 
                 nodeG.addEventListener('mouseenter', () => {
@@ -817,22 +964,18 @@ export class FlowVisualizer {
             expandedFiles.clear();
             expandedFiles.add(fileName);
 
-            // Calculate zoom and pan to fit this file block
             const canvas = document.getElementById('canvas');
             const rect = canvas.getBoundingClientRect();
             
-            // Target scale to make the file take up ~70% of the view
             const targetScale = Math.min(
                 (rect.width * 0.7) / bounds.width,
                 (rect.height * 0.7) / bounds.height,
-                3 // Max zoom
+                3
             );
             
-            // Target translation to center the file
             const targetTranslateX = rect.width / 2 - bounds.centerX * targetScale;
             const targetTranslateY = rect.height / 2 - bounds.centerY * targetScale;
 
-            // Animate zoom
             animateZoom(targetScale, targetTranslateX, targetTranslateY);
         }
 
@@ -846,7 +989,6 @@ export class FlowVisualizer {
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / duration, 1);
                 
-                // Easing function (ease-in-out)
                 const eased = progress < 0.5 
                     ? 2 * progress * progress 
                     : 1 - Math.pow(-2 * progress + 2, 2) / 2;
@@ -859,10 +1001,11 @@ export class FlowVisualizer {
                     gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
                 }
 
+                updateZoomIndicator();
+
                 if (progress < 1) {
                     requestAnimationFrame(animate);
                 } else {
-                    // Re-render with details after animation
                     renderVisualization();
                 }
             }
@@ -890,7 +1033,6 @@ export class FlowVisualizer {
         function updateNodePositions() {
             if (!gElement || !currentData) return;
 
-            // 1. Update Nodes (using the data-node-index fix from before)
             const nodes = gElement.querySelectorAll('.node');
             nodes.forEach((nodeG) => {
                 const indexStr = nodeG.getAttribute('data-node-index');
@@ -906,24 +1048,20 @@ export class FlowVisualizer {
                     }
                     if (text) {
                         text.setAttribute('x', nodePositions[i].x);
-                        text.setAttribute('y', nodePositions[i].y - 18);
+                        text.setAttribute('y', nodePositions[i].y - 16);
                     }
                 }
             });
 
-            // 2. Update Links (NEW: Use data attributes for direct lookup)
             const links = gElement.querySelectorAll('.link');
             links.forEach(line => {
-                // Read the indices we saved during render
                 const sourceIdx = parseInt(line.getAttribute('data-source-index'));
                 const targetIdx = parseInt(line.getAttribute('data-target-index'));
 
-                // Check if we have valid numbers
                 if (!isNaN(sourceIdx) && !isNaN(targetIdx)) {
                     const sourcePos = nodePositions[sourceIdx];
                     const targetPos = nodePositions[targetIdx];
 
-                    // Safety check to ensure positions exist
                     if (sourcePos && targetPos) {
                         line.setAttribute('x1', sourcePos.x);
                         line.setAttribute('y1', sourcePos.y);
@@ -947,11 +1085,9 @@ export class FlowVisualizer {
             const clusterArray = Array.from(clusters.entries());
             const numClusters = clusterArray.length;
             
-            // IMPROVED: Better grid calculation with more spacing
-            const cols = Math.ceil(Math.sqrt(numClusters * 1.5)); // Wider grid
+            const cols = Math.ceil(Math.sqrt(numClusters * 1.5));
             const rows = Math.ceil(numClusters / cols);
             
-            // IMPROVED: Much larger spacing between clusters
             const horizontalMargin = 400;
             const verticalMargin = 300;
             const clusterWidth = Math.max(250, (width - horizontalMargin) / cols);
@@ -963,11 +1099,9 @@ export class FlowVisualizer {
                 const col = clusterIndex % cols;
                 const row = Math.floor(clusterIndex / cols);
                 
-                // IMPROVED: Better starting position with more margin
                 const clusterCenterX = horizontalMargin/2 + col * clusterWidth + clusterWidth / 2;
                 const clusterCenterY = verticalMargin/2 + row * clusterHeight + clusterHeight / 2;
 
-                // Initialize positions within cluster with tighter initial spread
                 const clusterPositions = nodes.map(() => ({
                     x: clusterCenterX + (Math.random() - 0.5) * (clusterWidth * 0.4),
                     y: clusterCenterY + (Math.random() - 0.5) * (clusterHeight * 0.4),
@@ -975,15 +1109,13 @@ export class FlowVisualizer {
                     vy: 0
                 }));
 
-                // IMPROVED: Better force simulation parameters
                 for (let iter = 0; iter < 120; iter++) {
-                    // Repulsion between nodes in same cluster
                     for (let i = 0; i < clusterPositions.length; i++) {
                         for (let j = i + 1; j < clusterPositions.length; j++) {
                             const dx = clusterPositions[j].x - clusterPositions[i].x;
                             const dy = clusterPositions[j].y - clusterPositions[i].y;
                             const distance = Math.sqrt(dx * dx + dy * dy) || 1;
-                            const minDistance = 80; // Minimum spacing between nodes
+                            const minDistance = 80;
                             
                             if (distance < minDistance) {
                                 const force = (minDistance - distance) / distance * 2;
@@ -1001,7 +1133,6 @@ export class FlowVisualizer {
                         }
                     }
 
-                    // Attraction for function calls (within same cluster)
                     nodes.forEach(({func}, i) => {
                         func.calls.forEach(calledFunc => {
                             const j = nodes.findIndex(n => n.func.name === calledFunc);
@@ -1019,7 +1150,6 @@ export class FlowVisualizer {
                         });
                     });
 
-                    // Center attraction (keep cluster together)
                     clusterPositions.forEach(pos => {
                         const dx = clusterCenterX - pos.x;
                         const dy = clusterCenterY - pos.y;
@@ -1030,14 +1160,12 @@ export class FlowVisualizer {
                         pos.vy += (dy / distance) * force;
                     });
 
-                    // Update positions with damping
                     clusterPositions.forEach(pos => {
                         pos.x += pos.vx;
                         pos.y += pos.vy;
                         pos.vx *= 0.8;
                         pos.vy *= 0.8;
 
-                        // Keep within cluster bounds with margin
                         const margin = 30;
                         pos.x = Math.max(clusterCenterX - clusterWidth/2 + margin, 
                                         Math.min(clusterCenterX + clusterWidth/2 - margin, pos.x));
@@ -1046,7 +1174,6 @@ export class FlowVisualizer {
                     });
                 }
 
-                // Assign final positions
                 nodes.forEach(({index}, i) => {
                     positions[index] = clusterPositions[i];
                 });
@@ -1055,7 +1182,6 @@ export class FlowVisualizer {
             fileClusters = clusters;
             return positions;
         }
-
 
         function calculateForceLayout(functions, width, height) {
             const cols = Math.ceil(Math.sqrt(functions.length));
@@ -1087,7 +1213,7 @@ export class FlowVisualizer {
                         if (distance < minDistance) {
                             const force = (minDistance - distance) / distance * 3;
                             positions[i].vx -= (dx / distance) * force;
-                            positions[i].vy -= (dx / distance) * force;
+                            positions[i].vy -= (dy / distance) * force;
                             positions[j].vx += (dx / distance) * force;
                             positions[j].vy += (dy / distance) * force;
                         } else {
@@ -1248,13 +1374,27 @@ export class FlowVisualizer {
             vscode.postMessage({
                 command: 'analyzeComplexity',
                 functionName: func.name,
-                code: func.code // This field is now populated by your AST analyzer
+                code: func.code
             });
 
             const panel = document.getElementById('info-panel');
-            const fileName = func.fileName ? func.fileName.split('/').pop() : 'Unknown'; // Add this line
+            const rawFileName = func.fileName ? func.fileName.split('/').pop() : 'Unknown'; // Add this line
+
+            if (displayName.length > 28) {  
+                const ext = displayName.split('.').pop();
+                const nameWithoutExt = displayName.substring(0, displayName.lastIndexOf('.'));
+                let displayName = rawFileName;
+                
+                // If extension exists and name is still long, truncate the middle
+                if (ext && nameWithoutExt.length > 20) {
+                    displayName = nameWithoutExt.substring(0, 20) + '...' + ext;
+                } else {
+                    displayName = displayName.substring(0, 25) + '...';
+                }
+            }
+            
             panel.innerHTML = \`
-                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
                     <h3 style="margin: 0;">\${func.displayName || func.name}</h3>
                     <button onclick="hideInfo()" style="background: transparent; color: var(--vscode-foreground); border: none; cursor: pointer; font-size: 18px; padding: 0; margin: 0; line-height: 1;">×</button>
                 </div>
@@ -1266,7 +1406,6 @@ export class FlowVisualizer {
                     <li><strong>Parameters:</strong> \${func.params.length}</li>
                     <li><strong>Calls:</strong> \${func.calls.length} function(s)</li>
                     <li><strong>Called by:</strong> \${func.calledBy.length} function(s)</li>
-                    \${func.fileName ? '<li><strong>File:</strong> ' + func.fileName + '</li>' : ''}
                 </ul>
             \`;
             panel.style.display = 'block';
@@ -1336,7 +1475,6 @@ export class FlowVisualizer {
                 if (isPanning && !isDraggingNode) {
                     translateX = e.clientX - panStartX;
                     translateY = e.clientY - panStartY;
-                    // FIX: Use global gElement
                     if (gElement) {
                         gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
                     }
@@ -1376,19 +1514,16 @@ export class FlowVisualizer {
                 }
             });
 
-            // Wheel zoom
             svg.addEventListener('wheel', (e) => {
                 e.preventDefault();
                 const oldScale = scale;
                 const delta = e.deltaY > 0 ? 0.95 : 1.05;
                 const newScale = Math.max(0.1, Math.min(5, oldScale * delta));
                 
-                // Get mouse position in screen coordinates
                 const rect = svg.getBoundingClientRect();
                 const mouseX = e.clientX - rect.left;
                 const mouseY = e.clientY - rect.top;
                 
-                // Adjust translation to zoom toward mouse cursor
                 translateX = mouseX - (mouseX - translateX) * (newScale / oldScale);
                 translateY = mouseY - (mouseY - translateY) * (newScale / oldScale);
                 
@@ -1397,6 +1532,8 @@ export class FlowVisualizer {
                 if (gElement) {
                     gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
                 }
+
+                updateZoomIndicator();
 
                 if (isWorkspaceMode && currentLayout === 'force' && expandedFiles.size === 0) {
                     const wasBelow = oldScale <= ZOOM_THRESHOLD;
@@ -1418,6 +1555,7 @@ export class FlowVisualizer {
             translateY = 0;
             expandedFiles.clear();
             nodePositions = [];
+            updateZoomIndicator();
             renderVisualization();
         }
 
@@ -1443,13 +1581,11 @@ export class FlowVisualizer {
             const oldScale = scale;
             const newScale = oldScale * 1.2;
             
-            // Get canvas center in screen coordinates
             const canvas = document.getElementById('canvas');
             const rect = canvas.getBoundingClientRect();
             const centerX = rect.width / 2;
             const centerY = rect.height / 2;
             
-            // Adjust translation to zoom toward center
             translateX = centerX - (centerX - translateX) * (newScale / oldScale);
             translateY = centerY - (centerY - translateY) * (newScale / oldScale);
             
@@ -1459,7 +1595,8 @@ export class FlowVisualizer {
                 gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
             }
 
-            // Check threshold crossing only if no file is explicitly selected
+            updateZoomIndicator();
+
             if (isWorkspaceMode && currentLayout === 'force' && expandedFiles.size === 0) {
                 const wasBelow = oldScale <= ZOOM_THRESHOLD;
                 const isAbove = scale > ZOOM_THRESHOLD;
@@ -1476,13 +1613,11 @@ export class FlowVisualizer {
             const oldScale = scale;
             const newScale = oldScale * 0.8;
             
-            // Get canvas center in screen coordinates
             const canvas = document.getElementById('canvas');
             const rect = canvas.getBoundingClientRect();
             const centerX = rect.width / 2;
             const centerY = rect.height / 2;
             
-            // Adjust translation to zoom toward center
             translateX = centerX - (centerX - translateX) * (newScale / oldScale);
             translateY = centerY - (centerY - translateY) * (newScale / oldScale);
             
@@ -1492,7 +1627,8 @@ export class FlowVisualizer {
                 gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
             }
 
-            // Check threshold crossing only if no file is explicitly selected
+            updateZoomIndicator();
+
             if (isWorkspaceMode && currentLayout === 'force' && expandedFiles.size === 0) {
                 const wasAbove = oldScale > ZOOM_THRESHOLD;
                 const isBelow = scale <= ZOOM_THRESHOLD;
@@ -1503,9 +1639,9 @@ export class FlowVisualizer {
             }
             
             updateLayoutDescription();
-}
+        }
+
         initializeGlobalEvents();
-        // Initial render
         renderVisualization();
         `;
     }
