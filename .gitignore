@@ -4,3 +4,8 @@ node_modules
 *.vsix
 .DS_Store
 .env
+
+backend/.venv/
+backend/.env
+backend/__pycache__/
+backend/*.py[cod]
