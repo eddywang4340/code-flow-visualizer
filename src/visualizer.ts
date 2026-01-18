@@ -409,43 +409,34 @@ export class FlowVisualizer {
             const canvas = document.getElementById('canvas');
             if (!canvas || !gElement) return;
 
-            // Get current screen dimensions
             const rect = canvas.getBoundingClientRect();
             const screenW = rect.width;
             const screenH = rect.height;
 
             const links = gElement.querySelectorAll('.link');
-            
             links.forEach(line => {
-                // Get the source/target indices we saved earlier
-                const sourceIdx = parseInt(line.getAttribute('data-source-index'));
-                const targetIdx = parseInt(line.getAttribute('data-target-index'));
+                const sIdx = parseInt(line.getAttribute('data-source-index'));
+                const tIdx = parseInt(line.getAttribute('data-target-index'));
 
-                if (!isNaN(sourceIdx) && !isNaN(targetIdx)) {
-                    const sourcePos = nodePositions[sourceIdx];
-                    const targetPos = nodePositions[targetIdx];
+                const sPos = nodePositions[sIdx];
+                const tPos = nodePositions[tIdx];
 
-                    if (sourcePos && targetPos) {
-                        // Calculate actual screen coordinates based on current Pan/Zoom
-                        // Formula: (NodePos * Scale) + Translate
-                        const sX = sourcePos.x * scale + translateX;
-                        const sY = sourcePos.y * scale + translateY;
-                        const tX = targetPos.x * scale + translateX;
-                        const tY = targetPos.y * scale + translateY;
-
-                        // Check if Source is on screen
-                        const sourceVisible = sX >= 0 && sX <= screenW && sY >= 0 && sY <= screenH;
-                        
-                        // Check if Target is on screen
-                        const targetVisible = tX >= 0 && tX <= screenW && tY >= 0 && tY <= screenH;
-
-                        // USER REQUIREMENT: Only show if BOTH nodes are present on screen
-                        if (sourceVisible && targetVisible) {
-                            line.style.display = 'block';
-                        } else {
-                            line.style.display = 'none';
-                        }
+                if (sPos && tPos) {
+                    // FIX: If either node is explicitly hidden by layout, hide the link
+                    if (sPos.x < -1000 || tPos.x < -1000) {
+                        line.style.display = 'none';
+                        return;
                     }
+
+                    const sX = sPos.x * scale + translateX;
+                    const sY = sPos.y * scale + translateY;
+                    const tX = tPos.x * scale + translateX;
+                    const tY = tPos.y * scale + translateY;
+
+                    const sVisible = sX >= 0 && sX <= screenW && sY >= 0 && sY <= screenH;
+                    const tVisible = tX >= 0 && tX <= screenW && tY >= 0 && tY <= screenH;
+
+                    line.style.display = (sVisible && tVisible) ? 'block' : 'none';
                 }
             });
         }
@@ -690,16 +681,17 @@ export class FlowVisualizer {
 
                 func.calls.forEach(calledFunc => {
                     const targetIndex = functions.findIndex(f => f.name === calledFunc);
+                    const targetFunc = functions[targetIndex];
                     
                     // Skip hidden targets
-                    if (targetIndex !== -1 && positions[targetIndex].x > -1000) {
+                    if (targetIndex !== -1 && 
+                        positions[targetIndex].x > -1000 && 
+                        targetFunc && 
+                        filesToShow.has(targetFunc.fileName)) {
                         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                         line.setAttribute('class', 'link');
-                        
-                        // --- ADD THESE TWO LINES ---
                         line.setAttribute('data-source-index', i.toString());
                         line.setAttribute('data-target-index', targetIndex.toString());
-                        // ---------------------------
 
                         line.setAttribute('x1', positions[i].x);
                         line.setAttribute('y1', positions[i].y);
@@ -812,6 +804,8 @@ export class FlowVisualizer {
                     if (targetIndex !== -1 && positions[targetIndex].x > -1000) {
                         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                         line.setAttribute('class', 'link');
+                        line.setAttribute('data-source-index', i.toString());
+                        line.setAttribute('data-target-index', targetIndex.toString());
                         line.setAttribute('x1', positions[i].x);
                         line.setAttribute('y1', positions[i].y);
                         line.setAttribute('x2', positions[targetIndex].x);
@@ -1409,6 +1403,7 @@ export class FlowVisualizer {
                     if (gElement) {
                         gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
                     }
+                    updateLinkVisibility();
                 } else if (isDraggingNode && draggedNodeIndex >= 0) {
                     const pt = svg.createSVGPoint();
                     pt.x = e.clientX;
@@ -1422,6 +1417,7 @@ export class FlowVisualizer {
                     nodePositions[draggedNodeIndex].y = y;
                     
                     updateNodePositions();
+                    updateLinkVisibility();
                 }
             });
 
@@ -1475,7 +1471,6 @@ export class FlowVisualizer {
                         renderVisualization();
                     }
                 }
-                
                 updateLayoutDescription();
             });
         }
