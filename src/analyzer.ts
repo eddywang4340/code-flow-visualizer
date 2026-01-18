@@ -171,18 +171,17 @@ export class CodeAnalyzer {
         const startLine = node.startPosition.row;
         const endLine = node.endPosition.row;
 
-        // Extract parameters
         const params: string[] = [];
         const paramsNode = node.childForFieldName('parameters');
-        if (paramsNode) {
-            this.extractParameters(paramsNode, params);
-        }
+        if (paramsNode) this.extractParameters(paramsNode, params);
 
-        // Extract function calls and calculate complexity
         const calls = new Set<string>();
         let complexity = "";
 
-        console.log(`[JS] Function: ${name}, Calls: [${Array.from(calls).join(', ')}], Complexity: ${complexity}`);
+        const bodyNode = node.childForFieldName('body');
+        if (bodyNode) {
+            this.analyzeFunctionBody(bodyNode, name, calls, c => complexity = c, false);
+        }
 
         analysis.functions.set(name, {
             name,
@@ -193,10 +192,10 @@ export class CodeAnalyzer {
             calledBy: [],
             params,
             complexity,
-            fileName: analysis.fileName,
-            code: node.text
+            fileName: analysis.fileName
         });
     }
+
 
     private analyzePython(tree: Parser.Tree, analysis: CodeAnalysis): void {
         const traverse = (node: Parser.SyntaxNode) => {
@@ -233,18 +232,17 @@ export class CodeAnalyzer {
         const startLine = node.startPosition.row;
         const endLine = node.endPosition.row;
 
-        // Extract parameters
         const params: string[] = [];
         const paramsNode = node.childForFieldName('parameters');
-        if (paramsNode) {
-            this.extractParameters(paramsNode, params);
-        }
+        if (paramsNode) this.extractParameters(paramsNode, params);
 
-        // Extract function calls and calculate complexity
         const calls = new Set<string>();
         let complexity = "";
 
-        console.log(`[PY] Function: ${name}, Calls: [${Array.from(calls).join(', ')}], Complexity: ${complexity}`);
+        const bodyNode = node.childForFieldName('body');
+        if (bodyNode) {
+            this.analyzeFunctionBody(bodyNode, name, calls, c => complexity = c, true);
+        }
 
         analysis.functions.set(name, {
             name,
@@ -255,10 +253,10 @@ export class CodeAnalyzer {
             calledBy: [],
             params,
             complexity,
-            fileName: analysis.fileName,
-            code: node.text
+            fileName: analysis.fileName
         });
     }
+
 
     private analyzeJava(tree: Parser.Tree, analysis: CodeAnalysis): void {
         const traverse = (node: Parser.SyntaxNode) => {
@@ -288,16 +286,17 @@ export class CodeAnalyzer {
         const startLine = node.startPosition.row;
         const endLine = node.endPosition.row;
 
-        // Extract parameters
         const params: string[] = [];
         const paramsNode = node.childForFieldName('parameters');
-        if (paramsNode) {
-            this.extractParameters(paramsNode, params);
-        }
+        if (paramsNode) this.extractParameters(paramsNode, params);
 
-        // Extract method calls and calculate complexity
         const calls = new Set<string>();
         let complexity = "";
+
+        const bodyNode = node.childForFieldName('body');
+        if (bodyNode) {
+            this.analyzeFunctionBody(bodyNode, name, calls, c => complexity = c, false);
+        }
 
         analysis.functions.set(name, {
             name,
@@ -308,10 +307,10 @@ export class CodeAnalyzer {
             calledBy: [],
             params,
             complexity,
-            fileName: analysis.fileName,
-            code: node.text
+            fileName: analysis.fileName
         });
     }
+
 
     private extractParameters(paramsNode: Parser.SyntaxNode, params: string[]): void {
         const extractRecursive = (node: Parser.SyntaxNode) => {
@@ -379,8 +378,7 @@ export class CodeAnalyzer {
         const jsKeywords = ['if', 'for', 'while', 'switch', 'catch'];
 
         const traverse = (node: Parser.SyntaxNode) => {
-            // Calculate complexity
-
+            // Calculate complexity\\
             /*
             if (this.complexityNodeTypes.has(node.type)) {
                 complexity++;
