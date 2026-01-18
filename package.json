@@ -79,5 +79,11 @@
     "tree-sitter-java": "^0.23.5",
     "tree-sitter-javascript": "^0.25.0",
     "tree-sitter-python": "^0.25.0"
+  },
+
+  "overrides": {
+    "tree-sitter-java": {
+      "tree-sitter": "$tree-sitter"
+    }
   }
 }
