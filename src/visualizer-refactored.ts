@@ -220,8 +220,9 @@ export class FlowVisualizer {
         <div id="info-panel" class="info-panel"></div>
         <div id="zoom-indicator" class="zoom-indicator"></div>
     </div>
-
+    <script>
     ${this._getFullVisualizationScript()}
+    </script>
 </body>
 </html>`;
     }
