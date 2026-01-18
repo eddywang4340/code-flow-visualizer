@@ -1379,11 +1379,11 @@ export class FlowVisualizer {
 
             const panel = document.getElementById('info-panel');
             const rawFileName = func.fileName ? func.fileName.split('/').pop() : 'Unknown'; // Add this line
+            let displayName = rawFileName;
 
             if (displayName.length > 28) {  
                 const ext = displayName.split('.').pop();
                 const nameWithoutExt = displayName.substring(0, displayName.lastIndexOf('.'));
-                let displayName = rawFileName;
                 
                 // If extension exists and name is still long, truncate the middle
                 if (ext && nameWithoutExt.length > 20) {
@@ -1399,7 +1399,7 @@ export class FlowVisualizer {
                     <button onclick="hideInfo()" style="background: transparent; color: var(--vscode-foreground); border: none; cursor: pointer; font-size: 18px; padding: 0; margin: 0; line-height: 1;">×</button>
                 </div>
                 <ul>
-                    <li><strong>File:</strong> \${fileName}</li>
+                    <li><strong>File:</strong> \${displayName}</li>
                     <li><strong>Lines:</strong> \${func.startLine} - \${func.endLine}</li>
                     <li><strong>Complexity:</strong> <span id="complexity-value">Analyzing...</span></li>
                     <li><strong>Description:</strong> <span id="description-value">Analyzing...</span></li>
