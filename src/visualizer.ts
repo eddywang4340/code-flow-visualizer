@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { CodeAnalysis } from './analyzer';
+import {call_llm, codeSchema} from './llm-call';
+        
 
 export class FlowVisualizer {
     public static currentPanel: FlowVisualizer | undefined;
@@ -33,7 +35,7 @@ export class FlowVisualizer {
 
         // Handle messages from webview
         this._panel.webview.onDidReceiveMessage(
-            message => {
+            async message => {
                 switch (message.command) {
                     case 'navigateToFunction':
                         this._navigateToFunction(message.functionName, message.line, message.fileName);
@@ -43,6 +45,39 @@ export class FlowVisualizer {
                         break;
                     case 'alert':
                         vscode.window.showInformationMessage(message.text);
+                        break;
+                    case 'analyzeComplexity':
+                        // Call your LLM here
+                        try {
+                            const response = await fetch('http://127.0.0.1:8000/analyze', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({ 
+                                    code: message.code 
+                                })
+                            });
+
+                            if (!response.ok) {
+                                throw new Error(`Backend error: ${response.statusText}`);
+                            }
+
+                            const result: any = await response.json();
+                            
+                            // Send result back to WebView
+                            this._panel.webview.postMessage({
+                                command: 'updateComplexity',
+                                complexity: result.bigO || "Unknown", // Fallback if undefined
+                                description: result.description || "Unknown"
+                            });
+                        } catch (err: any) {
+                            vscode.window.showErrorMessage(`LLM Analysis failed: ${err.message}`);
+                            this._panel.webview.postMessage({
+                                command: 'updateComplexity',
+                                complexity: "Error" // Update UI to show error state
+                            });
+                        }
                         break;
                 }
             },
@@ -377,16 +412,6 @@ export class FlowVisualizer {
         const ZOOM_THRESHOLD = 1.5;
         let expandedFiles = new Set(); // Track which files are manually expanded
 
-        // Handle messages from extension
-        window.addEventListener('message', event => {
-            const message = event.data;
-            switch (message.command) {
-                case 'updateData':
-                    currentData = message.data;
-                    renderVisualization();
-                    break;
-            }
-        });
 
         // Handle auto-navigate toggle
         document.addEventListener('DOMContentLoaded', () => {
@@ -1335,6 +1360,12 @@ export class FlowVisualizer {
         }
 
         function showInfo(func) {
+            vscode.postMessage({
+                command: 'analyzeComplexity',
+                functionName: func.name,
+                code: func.code // This field is now populated by your AST analyzer
+            });
+
             const panel = document.getElementById('info-panel');
             const fileName = func.fileName ? func.fileName.split('/').pop() : 'Unknown'; // Add this line
             panel.innerHTML = \`
@@ -1345,7 +1376,8 @@ export class FlowVisualizer {
                 <ul>
                     <li><strong>File:</strong> \${fileName}</li>
                     <li><strong>Lines:</strong> \${func.startLine} - \${func.endLine}</li>
-                    <li><strong>Complexity:</strong> \${func.complexity}</li>
+                    <li><strong>Complexity:</strong> <span id="complexity-value">Analyzing...</span></li>
+                    <li><strong>Description:</strong> <span id="description-value">Analyzing...</span></li>
                     <li><strong>Parameters:</strong> \${func.params.length}</li>
                     <li><strong>Calls:</strong> \${func.calls.length} function(s)</li>
                     <li><strong>Called by:</strong> \${func.calledBy.length} function(s)</li>
@@ -1354,6 +1386,26 @@ export class FlowVisualizer {
             \`;
             panel.style.display = 'block';
         }
+
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.command) {
+                case 'updateData':
+                    currentData = message.data;
+                    renderVisualization();
+                    break;
+                case 'updateComplexity':
+                    const compSpan = document.getElementById('complexity-value');
+                    if (compSpan) {
+                        compSpan.innerText = message.complexity; 
+                    }
+                    const descSpan = document.getElementById('description-value');
+                    if (descSpan) {
+                        descSpan.innerText = message.description; 
+                    }
+                    break;
+            }
+        });
 
         function hideInfo() {
             const panel = document.getElementById('info-panel');

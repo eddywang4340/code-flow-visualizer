@@ -12,8 +12,9 @@ export interface FunctionNode {
     calls: string[];
     calledBy: string[];
     params: string[];
-    complexity: number;
+    complexity: string;
     fileName?: string;
+    code?: string;
 }
 
 export interface CodeAnalysis {
@@ -179,12 +180,7 @@ export class CodeAnalyzer {
 
         // Extract function calls and calculate complexity
         const calls = new Set<string>();
-        let complexity = 0;
-
-        const bodyNode = node.childForFieldName('body');
-        if (bodyNode) {
-            this.analyzeFunctionBody(bodyNode, name, calls, (c) => { complexity = c; });
-        }
+        let complexity = "";
 
         console.log(`[JS] Function: ${name}, Calls: [${Array.from(calls).join(', ')}], Complexity: ${complexity}`);
 
@@ -197,7 +193,8 @@ export class CodeAnalyzer {
             calledBy: [],
             params,
             complexity,
-            fileName: analysis.fileName
+            fileName: analysis.fileName,
+            code: node.text
         });
     }
 
@@ -245,12 +242,7 @@ export class CodeAnalyzer {
 
         // Extract function calls and calculate complexity
         const calls = new Set<string>();
-        let complexity = 0;
-
-        const bodyNode = node.childForFieldName('body');
-        if (bodyNode) {
-            this.analyzeFunctionBody(bodyNode, name, calls, (c) => { complexity = c; }, true);
-        }
+        let complexity = "";
 
         console.log(`[PY] Function: ${name}, Calls: [${Array.from(calls).join(', ')}], Complexity: ${complexity}`);
 
@@ -263,7 +255,8 @@ export class CodeAnalyzer {
             calledBy: [],
             params,
             complexity,
-            fileName: analysis.fileName
+            fileName: analysis.fileName,
+            code: node.text
         });
     }
 
@@ -304,12 +297,7 @@ export class CodeAnalyzer {
 
         // Extract method calls and calculate complexity
         const calls = new Set<string>();
-        let complexity = 0;
-
-        const bodyNode = node.childForFieldName('body');
-        if (bodyNode) {
-            this.analyzeFunctionBody(bodyNode, name, calls, (c) => { complexity = c; });
-        }
+        let complexity = "";
 
         analysis.functions.set(name, {
             name,
@@ -320,7 +308,8 @@ export class CodeAnalyzer {
             calledBy: [],
             params,
             complexity,
-            fileName: analysis.fileName
+            fileName: analysis.fileName,
+            code: node.text
         });
     }
 
@@ -381,16 +370,18 @@ export class CodeAnalyzer {
         bodyNode: Parser.SyntaxNode,
         functionName: string,
         calls: Set<string>,
-        setComplexity: (c: number) => void,
+        setComplexity: (c: string) => void,
         isPython: boolean = false
     ): void {
-        let complexity = 0;
+        let complexity = "";
         // More minimal builtin lists - only filter obvious keywords
         const pythonKeywords = ['if', 'for', 'while'];
         const jsKeywords = ['if', 'for', 'while', 'switch', 'catch'];
 
         const traverse = (node: Parser.SyntaxNode) => {
             // Calculate complexity
+
+            /*
             if (this.complexityNodeTypes.has(node.type)) {
                 complexity++;
             }
@@ -401,7 +392,7 @@ export class CodeAnalyzer {
                 if (['&&', '||', 'and', 'or'].includes(operator)) {
                     complexity++;
                 }
-            }
+            }*/
 
             // Extract function/method calls
             // Python uses 'call', JavaScript uses 'call_expression', Java uses 'method_invocation'
@@ -487,8 +478,9 @@ export class CodeAnalyzer {
                 calls: [],
                 calledBy: [],
                 params: [],
-                complexity: 0,
-                fileName: analysis.fileName
+                complexity: "",
+                fileName: analysis.fileName,
+                code: text
             });
         }
     }
