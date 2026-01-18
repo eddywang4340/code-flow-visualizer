@@ -3,6 +3,11 @@
   "displayName": "Code Flow Visualizer",
   "description": "Visualize code structure and function call relationships in real-time",
   "version": "0.0.1",
+  "icon":"CodeFlowIcon.png",
+  "galleryBanner.color": {
+    "color": "21214c",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
