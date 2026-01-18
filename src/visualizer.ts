@@ -164,11 +164,12 @@ export class FlowVisualizer {
         }
 
         #container {
-            width: 100%;
-            height: 100%;
+            width: 100vw;
+            height: 100vh;
             display: flex;
             flex-direction: column;
             position: relative;
+            overflow: visible;
         }
 
         #controls {
@@ -203,7 +204,7 @@ export class FlowVisualizer {
             border: 1px solid var(--vscode-panel-border);
             background-color: var(--vscode-editor-background);
             cursor: grab;
-            overflow: hidden;
+            overflow: visible;
             position: relative;
         }
 
@@ -289,6 +290,42 @@ export class FlowVisualizer {
             pointer-events: none;
         }
 
+        .file-block {
+            fill: rgba(59, 130, 246, 0.08);
+            stroke: rgba(59, 130, 246, 0.4);
+            stroke-width: 1.5;
+            transition: all 0.2s ease;
+        }
+
+        .file-block:hover {
+            fill: rgba(59, 130, 246, 0.15);
+            stroke: rgba(59, 130, 246, 0.8);
+            stroke-width: 3;
+        }
+
+        .file-block-label {
+            fill: #e5e7eb;
+            font-size: 14px;
+            font-weight: 600;
+            pointer-events: none;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .file-block-count {
+            fill: #9ca3af;
+            font-size: 12px;
+            pointer-events: none;
+        }
+
+        .file-block-hint {
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .file-block-group:hover .file-block-hint {
+            opacity: 1;
+        }
+
         .complexity-low { fill: #4CAF50; }
         .complexity-medium { fill: #FFC107; }
         .complexity-high { fill: #FF5722; }
@@ -301,6 +338,12 @@ export class FlowVisualizer {
             <button onclick="toggleLayout()">Change Layout</button>
             <button onclick="zoomIn()">Zoom In</button>
             <button onclick="zoomOut()">Zoom Out</button>
+
+            <label style="margin-left: 20px; font-size: 12px;">
+                <input type="checkbox" id="nav-mode-toggle" checked />
+                Auto Navigate on Hover
+            </label>
+
             <span id="layout-info">Force Layout</span>
             <span id="layout-description">Showing all connected functions</span>
         </div>
@@ -315,6 +358,7 @@ export class FlowVisualizer {
         let currentData = null;
         let currentLayout = 'force';
         let scale = 1;
+        let autoNavigate = true;
         let translateX = 0;
         let translateY = 0;
         let isPanning = false;
@@ -325,6 +369,13 @@ export class FlowVisualizer {
         let nodePositions = [];
         let svgElement = null;
         let gElement = null;
+        let isWorkspaceMode = false;
+        let fileClusters = new Map();
+        let clusterBounds = new Map(); // Store cluster boundaries
+        
+        // Zoom threshold for showing detailed nodes
+        const ZOOM_THRESHOLD = 1.5;
+        let expandedFiles = new Set(); // Track which files are manually expanded
 
         // Handle messages from extension
         window.addEventListener('message', event => {
@@ -337,15 +388,58 @@ export class FlowVisualizer {
             }
         });
 
+        // Handle auto-navigate toggle
+        document.addEventListener('DOMContentLoaded', () => {
+            const toggle = document.getElementById('nav-mode-toggle');
+            toggle.addEventListener('change', () => {
+                autoNavigate = toggle.checked;
+            });
+        });
+
         // Handle window resize
         let resizeTimeout;
         window.addEventListener('resize', () => {
-            // Debounce resize to avoid too many re-renders
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(() => {
                 updateSVGDimensions();
             }, 150);
         });
+
+        function updateLinkVisibility() {
+            const canvas = document.getElementById('canvas');
+            if (!canvas || !gElement) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const screenW = rect.width;
+            const screenH = rect.height;
+
+            const links = gElement.querySelectorAll('.link');
+            links.forEach(line => {
+                const sIdx = parseInt(line.getAttribute('data-source-index'));
+                const tIdx = parseInt(line.getAttribute('data-target-index'));
+
+                const sPos = nodePositions[sIdx];
+                const tPos = nodePositions[tIdx];
+
+                if (sPos && tPos) {
+                    // FIX: If either node is explicitly hidden by layout, hide the link
+                    if (sPos.x < -1000 || tPos.x < -1000) {
+                        line.style.display = 'none';
+                        return;
+                    }
+
+                    const sX = sPos.x * scale + translateX;
+                    const sY = sPos.y * scale + translateY;
+                    const tX = tPos.x * scale + translateX;
+                    const tY = tPos.y * scale + translateY;
+
+                    const sVisible = sX >= 0 && sX <= screenW && sY >= 0 && sY <= screenH;
+                    const tVisible = tX >= 0 && tX <= screenW && tY >= 0 && tY <= screenH;
+
+                    line.style.display = (sVisible && tVisible) ? 'block' : 'none';
+                }
+            });
+        }
 
         function updateSVGDimensions() {
             const svg = document.getElementById('main-svg');
@@ -395,37 +489,210 @@ export class FlowVisualizer {
                 return;
             }
 
+            // Detect workspace mode
+            isWorkspaceMode = functions.some(f => f.fileName !== undefined);
+
             let positions;
-            // Use stored positions if available (after user dragged nodes)
             if (nodePositions.length === functions.length) {
                 positions = nodePositions;
             } else if (currentLayout === 'force') {
-                positions = calculateForceLayout(functions, width, height);
+                if (isWorkspaceMode) {
+                    positions = calculateClusteredLayout(functions, width, height);
+                } else {
+                    positions = calculateForceLayout(functions, width, height);
+                }
                 nodePositions = positions;
             } else {
                 positions = calculateHierarchicalLayout(functions, width, height);
                 nodePositions = positions;
             }
 
-            // Validate positions - ensure no NaN values
+            // Validate positions
             positions.forEach((pos, i) => {
                 if (isNaN(pos.x) || isNaN(pos.y) || pos.x === undefined || pos.y === undefined) {
-                    // Fallback to center position
                     pos.x = width / 2 + (Math.random() - 0.5) * 100;
                     pos.y = height / 2 + (Math.random() - 0.5) * 100;
                 }
             });
 
-            // Draw links
-            functions.forEach((func, i) => {
-                // Skip drawing links from/to hidden nodes
-                if (positions[i].x < -1000) return;
+            // Workspace mode with hierarchical zoom
+            if (isWorkspaceMode && currentLayout === 'force') {
+                const showDetails = scale > ZOOM_THRESHOLD || expandedFiles.size > 0;
                 
+                if (showDetails) {
+                    // Detailed view: show nodes and links for expanded files
+                    renderDetailedView(g, functions, positions);
+                } else {
+                    // Overview: show file blocks only
+                    renderOverviewBlocks(g, functions, positions);
+                }
+            } else {
+                // Original behavior for single file or hierarchical layout
+                renderStandardView(g, functions, positions);
+            }
+
+            updateLayoutDescription();
+            updateLinkVisibility();
+        }
+
+        function renderOverviewBlocks(g, functions, positions) {
+            fileClusters.clear();
+            clusterBounds.clear();
+            
+            // Group functions by file
+            functions.forEach((func, i) => {
+                if (func.fileName && positions[i].x > -1000) {
+                    if (!fileClusters.has(func.fileName)) {
+                        fileClusters.set(func.fileName, []);
+                    }
+                    fileClusters.get(func.fileName).push({func, pos: positions[i], index: i});
+                }
+            });
+
+            // Draw file blocks with improved styling
+            fileClusters.forEach((nodes, fileName) => {
+                if (nodes.length === 0) return;
+                
+                // Calculate bounding box
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                nodes.forEach(node => {
+                    minX = Math.min(minX, node.pos.x);
+                    minY = Math.min(minY, node.pos.y);
+                    maxX = Math.max(maxX, node.pos.x);
+                    maxY = Math.max(maxY, node.pos.y);
+                });
+
+                // IMPROVED: Better sizing with minimum dimensions
+                const MIN_WIDTH = 200;
+                const MIN_HEIGHT = 120;
+                const padding = 35;
+
+                let width = Math.max(MIN_WIDTH, maxX - minX + 2 * padding);
+                let height = Math.max(MIN_HEIGHT, maxY - minY + 2 * padding);
+
+                const bounds = {
+                    x: minX - padding,
+                    y: minY - padding,
+                    width,
+                    height,
+                    centerX: (minX + maxX) / 2,
+                    centerY: (minY + maxY) / 2
+                };
+                clusterBounds.set(fileName, bounds);
+
+                // Create block group
+                const blockG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                blockG.setAttribute('class', 'file-block-group');
+                blockG.setAttribute('data-file-name', fileName);
+
+                // Draw rounded rectangle
+                const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                rect.setAttribute('class', 'file-block');
+                rect.setAttribute('x', bounds.x.toString());
+                rect.setAttribute('y', bounds.y.toString());
+                rect.setAttribute('width', bounds.width.toString());
+                rect.setAttribute('height', bounds.height.toString());
+                rect.setAttribute('rx', '12');
+                blockG.appendChild(rect);
+
+                // IMPROVED: Extract and truncate filename intelligently
+                const fileNameOnly = fileName.split(/[\\/]/).pop() || fileName;
+                let displayName = fileNameOnly;
+                if (displayName.length > 28) {
+                    const ext = displayName.split('.').pop();
+                    const nameWithoutExt = displayName.substring(0, displayName.lastIndexOf('.'));
+                    if (ext && nameWithoutExt.length > 20) {
+                        displayName = nameWithoutExt.substring(0, 20) + '...' + ext;
+                    } else {
+                        displayName = displayName.substring(0, 25) + '...';
+                    }
+                }
+
+                // File name label - centered vertically in the block
+                const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                label.setAttribute('class', 'file-block-label');
+                label.setAttribute('x', (bounds.x + bounds.width / 2).toString());
+                label.setAttribute('y', (bounds.y + bounds.height / 2 - 5).toString());
+                label.setAttribute('text-anchor', 'middle');
+                label.setAttribute('dominant-baseline', 'middle');
+                label.textContent = displayName;
+                blockG.appendChild(label);
+
+                // Function count below filename
+                const count = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                count.setAttribute('class', 'file-block-count');
+                count.setAttribute('x', (bounds.x + bounds.width / 2).toString());
+                count.setAttribute('y', (bounds.y + bounds.height / 2 + 18).toString());
+                count.setAttribute('text-anchor', 'middle');
+                count.setAttribute('dominant-baseline', 'middle');
+                
+                // IMPROVED: Better function count display
+                const funcCount = nodes.length;
+                if (funcCount === 1) {
+                    count.textContent = '1 function';
+                } else if (funcCount < 10) {
+                    count.textContent = funcCount + ' functions';
+                } else {
+                    count.textContent = funcCount + ' functions';
+                }
+                blockG.appendChild(count);
+                
+                // IMPROVED: Add hover effect hint
+                const hoverHint = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                hoverHint.setAttribute('class', 'file-block-hint');
+                hoverHint.setAttribute('x', (bounds.x + bounds.width / 2).toString());
+                hoverHint.setAttribute('y', (bounds.y + bounds.height - 15).toString());
+                hoverHint.setAttribute('text-anchor', 'middle');
+                hoverHint.setAttribute('fill', 'rgba(255, 255, 255, 0.4)');
+                hoverHint.setAttribute('font-size', '10px');
+                hoverHint.textContent = 'Click to expand';
+                blockG.appendChild(hoverHint);
+                
+                // Click handler to zoom into this file
+                blockG.style.cursor = 'pointer';
+                blockG.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    zoomToFile(fileName, bounds);
+                });
+
+                // IMPROVED: Add hover effect
+                blockG.addEventListener('mouseenter', () => {
+                    rect.style.strokeWidth = '3';
+                    rect.style.filter = 'brightness(1.2)';
+                });
+                
+                blockG.addEventListener('mouseleave', () => {
+                    rect.style.strokeWidth = '1.5';
+                    rect.style.filter = 'none';
+                });
+
+                g.appendChild(blockG);
+            });
+        }
+
+        function renderDetailedView(g, functions, positions) {
+            // Determine which files to show
+            const filesToShow = expandedFiles.size > 0 ? expandedFiles : new Set(fileClusters.keys());
+
+           // Draw links
+            functions.forEach((func, i) => {
+                // Skip drawing links from hidden nodes (matches your existing logic)
+                if (positions[i].x < -1000 || !filesToShow.has(func.fileName)) return;
+
                 func.calls.forEach(calledFunc => {
                     const targetIndex = functions.findIndex(f => f.name === calledFunc);
-                    if (targetIndex !== -1 && positions[targetIndex].x > -1000) {
+                    const targetFunc = functions[targetIndex];
+
+                    // Skip hidden targets
+                    if (targetIndex !== -1 && 
+                        positions[targetIndex].x > -1000 && 
+                        targetFunc && 
+                        filesToShow.has(targetFunc.fileName)) {
                         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                         line.setAttribute('class', 'link');
+                        line.setAttribute('data-source-index', i.toString());
+                        line.setAttribute('data-target-index', targetIndex.toString());
+
                         line.setAttribute('x1', positions[i].x);
                         line.setAttribute('y1', positions[i].y);
                         line.setAttribute('x2', positions[targetIndex].x);
@@ -436,13 +703,10 @@ export class FlowVisualizer {
                 });
             });
 
-            // Draw nodes (skip hidden nodes in hierarchical mode)
-            let visibleCount = 0;
+            // Draw nodes for visible functions
             functions.forEach((func, i) => {
-                // Skip drawing hidden nodes (off-screen in hierarchical mode)
                 if (positions[i].x < -1000) return;
-                
-                visibleCount++;
+                if (!filesToShow.has(func.fileName)) return;
                 
                 const nodeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
                 nodeG.setAttribute('class', 'node');
@@ -455,7 +719,6 @@ export class FlowVisualizer {
                 circle.setAttribute('cy', positions[i].y);
                 circle.setAttribute('r', (12 + func.complexity * 1.5).toString());
                 
-                // Color by complexity
                 if (func.complexity < 3) {
                     circle.setAttribute('class', 'complexity-low');
                 } else if (func.complexity < 7) {
@@ -472,19 +735,22 @@ export class FlowVisualizer {
                 text.setAttribute('y', positions[i].y - 18);
                 text.setAttribute('text-anchor', 'middle');
                 text.setAttribute('fill', 'var(--vscode-foreground)');
-                text.textContent = func.name.length > 15 ? func.name.substring(0, 12) + '...' : func.name;
+                text.textContent = func.displayName && func.displayName.length > 15 
+                    ? func.displayName.substring(0, 12) + '...' 
+                    : (func.displayName || func.name);
                 nodeG.appendChild(text);
 
-                // Hover: highlight line in code AND switch files if needed
                 nodeG.addEventListener('mouseenter', () => {
                     if (!isDraggingNode) {
                         nodeG.classList.add('highlighted');
-                        vscode.postMessage({
-                            command: 'navigateToFunction',
-                            functionName: func.name,
-                            line: func.startLine,
-                            fileName: func.fileName  // CHANGED: Now includes fileName
-                        });
+                        if (autoNavigate) {
+                            vscode.postMessage({
+                                command: 'navigateToFunction',
+                                functionName: func.name,
+                                line: func.startLine,
+                                fileName: func.fileName
+                            });
+                        }
                     }
                 });
 
@@ -492,16 +758,28 @@ export class FlowVisualizer {
                     nodeG.classList.remove('highlighted');
                     vscode.postMessage({
                         command: 'clearHighlight'
-                    })
+                    });
                 });
 
-                // Click: show info panel
                 nodeG.addEventListener('click', (e) => {
                     if (!isDraggingNode) {
                         e.stopPropagation();
                         showInfo(func);
                     }
                 });
+
+                nodeG.addEventListener('dblclick', (e) => {
+                    e.stopPropagation();
+                    if (!autoNavigate) {
+                        vscode.postMessage({
+                            command: 'navigateToFunction',
+                            functionName: func.name,
+                            line: func.startLine,
+                            fileName: func.fileName
+                        });
+                    }
+                });
+
 
                 // Node dragging - mousedown on node
                 nodeG.addEventListener('mousedown', (e) => {
@@ -510,39 +788,205 @@ export class FlowVisualizer {
                     isDraggingNode = true;
                     draggedNodeIndex = i;
                     nodeG.classList.add('dragging');
-                    canvas.style.cursor = 'grabbing';
                 });
 
                 g.appendChild(nodeG);
             });
+        }
 
-            setupInteractions(svg, g);
-            
-            // Update layout description with node count
-            const layoutDesc = document.getElementById('layout-description');
-            if (layoutDesc) {
-                if (currentLayout === 'hierarchical') {
-                    if (visibleCount < functions.length) {
-                        layoutDesc.textContent = 'Showing ' + visibleCount + ' of ' + functions.length + ' functions (deep call chains and hubs only)';
-                    } else {
-                        layoutDesc.textContent = 'Showing only deep call chains (depth ≥ 2) and important hubs';
+        function renderStandardView(g, functions, positions) {
+            // Draw links
+            functions.forEach((func, i) => {
+                if (positions[i].x < -1000) return;
+                
+                func.calls.forEach(calledFunc => {
+                    const targetIndex = functions.findIndex(f => f.name === calledFunc);
+                    if (targetIndex !== -1 && positions[targetIndex].x > -1000) {
+                        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        line.setAttribute('class', 'link');
+                        line.setAttribute('data-source-index', i.toString());
+                        line.setAttribute('data-target-index', targetIndex.toString());
+                        line.setAttribute('x1', positions[i].x);
+                        line.setAttribute('y1', positions[i].y);
+                        line.setAttribute('x2', positions[targetIndex].x);
+                        line.setAttribute('y2', positions[targetIndex].y);
+                        g.appendChild(line);
                     }
+                });
+            });
+
+            // Draw nodes
+            functions.forEach((func, i) => {
+                if (positions[i].x < -1000) return;
+                
+                const nodeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                nodeG.setAttribute('class', 'node');
+                nodeG.setAttribute('data-function-name', func.name);
+                nodeG.setAttribute('data-line', func.startLine.toString());
+                nodeG.setAttribute('data-node-index', i.toString());
+                
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('cx', positions[i].x);
+                circle.setAttribute('cy', positions[i].y);
+                circle.setAttribute('r', (12 + func.complexity * 1.5).toString());
+                
+                if (func.complexity < 3) {
+                    circle.setAttribute('class', 'complexity-low');
+                } else if (func.complexity < 7) {
+                    circle.setAttribute('class', 'complexity-medium');
                 } else {
-                    layoutDesc.textContent = 'Showing all ' + visibleCount + ' connected functions';
+                    circle.setAttribute('class', 'complexity-high');
                 }
+                
+                nodeG.appendChild(circle);
+
+                const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text.setAttribute('class', 'node-text');
+                text.setAttribute('x', positions[i].x);
+                text.setAttribute('y', positions[i].y - 18);
+                text.setAttribute('text-anchor', 'middle');
+                text.setAttribute('fill', 'var(--vscode-foreground)');
+                text.textContent = func.displayName && func.displayName.length > 15 
+                ? func.displayName.substring(0, 12) + '...' 
+                : (func.displayName || func.name);
+                nodeG.appendChild(text);
+
+                nodeG.addEventListener('mouseenter', () => {
+                    if (!isDraggingNode) {
+                        nodeG.classList.add('highlighted');
+                        if (autoNavigate) {
+                            vscode.postMessage({
+                                command: 'navigateToFunction',
+                                functionName: func.name,
+                                line: func.startLine,
+                                fileName: func.fileName
+                            });
+                        }
+                    }
+                });
+
+                nodeG.addEventListener('dblclick', (e) => {
+                    e.stopPropagation();
+                    if (!autoNavigate) {  // Only navigate on double-click when auto-navigate is OFF
+                        vscode.postMessage({
+                            command: 'navigateToFunction',
+                            functionName: func.name,
+                            line: func.startLine,
+                            fileName: func.fileName
+                        });
+                    }
+                });
+
+                nodeG.addEventListener('mouseleave', () => {
+                    nodeG.classList.remove('highlighted');
+                    vscode.postMessage({
+                        command: 'clearHighlight'
+                    });
+                });
+
+                nodeG.addEventListener('click', (e) => {
+                    if (!isDraggingNode) {
+                        e.stopPropagation();
+                        showInfo(func);
+                    }
+                });
+
+                nodeG.addEventListener('mousedown', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    isDraggingNode = true;
+                    draggedNodeIndex = i;
+                    nodeG.classList.add('dragging');
+                });
+
+                g.appendChild(nodeG);
+            });
+        }
+
+        function zoomToFile(fileName, bounds) {
+            expandedFiles.clear();
+            expandedFiles.add(fileName);
+
+            // Calculate zoom and pan to fit this file block
+            const canvas = document.getElementById('canvas');
+            const rect = canvas.getBoundingClientRect();
+            
+            // Target scale to make the file take up ~70% of the view
+            const targetScale = Math.min(
+                (rect.width * 0.7) / bounds.width,
+                (rect.height * 0.7) / bounds.height,
+                3 // Max zoom
+            );
+            
+            // Target translation to center the file
+            const targetTranslateX = rect.width / 2 - bounds.centerX * targetScale;
+            const targetTranslateY = rect.height / 2 - bounds.centerY * targetScale;
+
+            // Animate zoom
+            animateZoom(targetScale, targetTranslateX, targetTranslateY);
+        }
+
+        function animateZoom(targetScale, targetX, targetY, duration = 500) {
+            const startScale = scale;
+            const startX = translateX;
+            const startY = translateY;
+            const startTime = Date.now();
+
+            function animate() {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                // Easing function (ease-in-out)
+                const eased = progress < 0.5 
+                    ? 2 * progress * progress 
+                    : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+                scale = startScale + (targetScale - startScale) * eased;
+                translateX = startX + (targetX - startX) * eased;
+                translateY = startY + (targetY - startY) * eased;
+
+                if (gElement) {
+                    gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
+                }
+
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                } else {
+                    // Re-render with details after animation
+                    renderVisualization();
+                }
+            }
+
+            animate();
+        }
+
+        function updateLayoutDescription() {
+            const layoutDesc = document.getElementById('layout-description');
+            if (!layoutDesc) return;
+
+            if (isWorkspaceMode && currentLayout === 'force') {
+                if (scale > ZOOM_THRESHOLD || expandedFiles.size > 0) {
+                    layoutDesc.textContent = 'Detailed view - showing function nodes and links';
+                } else {
+                    layoutDesc.textContent = 'File overview - zoom in or click a file to see details';
+                }
+            } else if (currentLayout === 'hierarchical') {
+                layoutDesc.textContent = 'Showing only deep call chains (depth ≥ 2) and important hubs';
+            } else {
+                layoutDesc.textContent = 'Showing all connected functions';
             }
         }
 
-        // Update node positions without full re-render
         function updateNodePositions() {
             if (!gElement || !currentData) return;
 
-            const functions = Object.values(currentData.functions);
-            
-            // Update all nodes
+            // 1. Update Nodes (using the data-node-index fix from before)
             const nodes = gElement.querySelectorAll('.node');
-            nodes.forEach((nodeG, i) => {
-                if (i < nodePositions.length) {
+            nodes.forEach((nodeG) => {
+                const indexStr = nodeG.getAttribute('data-node-index');
+                const i = indexStr ? parseInt(indexStr) : -1;
+
+                if (i >= 0 && i < nodePositions.length) {
                     const circle = nodeG.querySelector('circle');
                     const text = nodeG.querySelector('text');
                     
@@ -557,55 +1001,187 @@ export class FlowVisualizer {
                 }
             });
 
-            // Update all links
+            // 2. Update Links (NEW: Use data attributes for direct lookup)
             const links = gElement.querySelectorAll('.link');
-            let linkIndex = 0;
-            functions.forEach((func, i) => {
-                func.calls.forEach(calledFunc => {
-                    const targetIndex = functions.findIndex(f => f.name === calledFunc);
-                    if (targetIndex !== -1 && links[linkIndex]) {
-                        links[linkIndex].setAttribute('x1', nodePositions[i].x);
-                        links[linkIndex].setAttribute('y1', nodePositions[i].y);
-                        links[linkIndex].setAttribute('x2', nodePositions[targetIndex].x);
-                        links[linkIndex].setAttribute('y2', nodePositions[targetIndex].y);
-                        linkIndex++;
+            links.forEach(line => {
+                // Read the indices we saved during render
+                const sourceIdx = parseInt(line.getAttribute('data-source-index'));
+                const targetIdx = parseInt(line.getAttribute('data-target-index'));
+
+                // Check if we have valid numbers
+                if (!isNaN(sourceIdx) && !isNaN(targetIdx)) {
+                    const sourcePos = nodePositions[sourceIdx];
+                    const targetPos = nodePositions[targetIdx];
+
+                    // Safety check to ensure positions exist
+                    if (sourcePos && targetPos) {
+                        line.setAttribute('x1', sourcePos.x);
+                        line.setAttribute('y1', sourcePos.y);
+                        line.setAttribute('x2', targetPos.x);
+                        line.setAttribute('y2', targetPos.y);
                     }
-                });
+                }
             });
         }
 
-        function calculateForceLayout(functions, width, height) {
-            // Initialize positions for all functions
-            const positions = functions.map((_, i) => ({
-                x: Math.random() * (width - 200) + 100,
-                y: Math.random() * (height - 200) + 100,
-                vx: 0,
-                vy: 0
-            }));
+        function calculateClusteredLayout(functions, width, height) {
+            const clusters = new Map();
+            functions.forEach((func, i) => {
+                const fileName = func.fileName || 'default';
+                if (!clusters.has(fileName)) {
+                    clusters.set(fileName, []);
+                }
+                clusters.get(fileName).push({func, index: i});
+            });
 
-            // Ensure we have valid dimensions
+            const clusterArray = Array.from(clusters.entries());
+            const numClusters = clusterArray.length;
+            
+            // IMPROVED: Better grid calculation with more spacing
+            const cols = Math.ceil(Math.sqrt(numClusters * 1.5)); // Wider grid
+            const rows = Math.ceil(numClusters / cols);
+            
+            // IMPROVED: Much larger spacing between clusters
+            const horizontalMargin = 400;
+            const verticalMargin = 300;
+            const clusterWidth = Math.max(250, (width - horizontalMargin) / cols);
+            const clusterHeight = Math.max(200, (height - verticalMargin) / rows);
+
+            const positions = new Array(functions.length);
+
+            clusterArray.forEach(([fileName, nodes], clusterIndex) => {
+                const col = clusterIndex % cols;
+                const row = Math.floor(clusterIndex / cols);
+                
+                // IMPROVED: Better starting position with more margin
+                const clusterCenterX = horizontalMargin/2 + col * clusterWidth + clusterWidth / 2;
+                const clusterCenterY = verticalMargin/2 + row * clusterHeight + clusterHeight / 2;
+
+                // Initialize positions within cluster with tighter initial spread
+                const clusterPositions = nodes.map(() => ({
+                    x: clusterCenterX + (Math.random() - 0.5) * (clusterWidth * 0.4),
+                    y: clusterCenterY + (Math.random() - 0.5) * (clusterHeight * 0.4),
+                    vx: 0,
+                    vy: 0
+                }));
+
+                // IMPROVED: Better force simulation parameters
+                for (let iter = 0; iter < 120; iter++) {
+                    // Repulsion between nodes in same cluster
+                    for (let i = 0; i < clusterPositions.length; i++) {
+                        for (let j = i + 1; j < clusterPositions.length; j++) {
+                            const dx = clusterPositions[j].x - clusterPositions[i].x;
+                            const dy = clusterPositions[j].y - clusterPositions[i].y;
+                            const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+                            const minDistance = 80; // Minimum spacing between nodes
+                            
+                            if (distance < minDistance) {
+                                const force = (minDistance - distance) / distance * 2;
+                                clusterPositions[i].vx -= (dx / distance) * force;
+                                clusterPositions[i].vy -= (dy / distance) * force;
+                                clusterPositions[j].vx += (dx / distance) * force;
+                                clusterPositions[j].vy += (dy / distance) * force;
+                            } else {
+                                const force = 800 / (distance * distance);
+                                clusterPositions[i].vx -= (dx / distance) * force;
+                                clusterPositions[i].vy -= (dy / distance) * force;
+                                clusterPositions[j].vx += (dx / distance) * force;
+                                clusterPositions[j].vy += (dy / distance) * force;
+                            }
+                        }
+                    }
+
+                    // Attraction for function calls (within same cluster)
+                    nodes.forEach(({func}, i) => {
+                        func.calls.forEach(calledFunc => {
+                            const j = nodes.findIndex(n => n.func.name === calledFunc);
+                            if (j !== -1) {
+                                const dx = clusterPositions[j].x - clusterPositions[i].x;
+                                const dy = clusterPositions[j].y - clusterPositions[i].y;
+                                const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+                                const force = distance * 0.008;
+                                
+                                clusterPositions[i].vx += (dx / distance) * force;
+                                clusterPositions[i].vy += (dy / distance) * force;
+                                clusterPositions[j].vx -= (dx / distance) * force;
+                                clusterPositions[j].vy -= (dy / distance) * force;
+                            }
+                        });
+                    });
+
+                    // Center attraction (keep cluster together)
+                    clusterPositions.forEach(pos => {
+                        const dx = clusterCenterX - pos.x;
+                        const dy = clusterCenterY - pos.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        const force = distance * 0.003;
+                        
+                        pos.vx += (dx / distance) * force;
+                        pos.vy += (dy / distance) * force;
+                    });
+
+                    // Update positions with damping
+                    clusterPositions.forEach(pos => {
+                        pos.x += pos.vx;
+                        pos.y += pos.vy;
+                        pos.vx *= 0.8;
+                        pos.vy *= 0.8;
+
+                        // Keep within cluster bounds with margin
+                        const margin = 30;
+                        pos.x = Math.max(clusterCenterX - clusterWidth/2 + margin, 
+                                        Math.min(clusterCenterX + clusterWidth/2 - margin, pos.x));
+                        pos.y = Math.max(clusterCenterY - clusterHeight/2 + margin, 
+                                        Math.min(clusterCenterY + clusterHeight/2 - margin, pos.y));
+                    });
+                }
+
+                // Assign final positions
+                nodes.forEach(({index}, i) => {
+                    positions[index] = clusterPositions[i];
+                });
+            });
+
+            fileClusters = clusters;
+            return positions;
+        }
+
+
+        function calculateForceLayout(functions, width, height) {
+            const cols = Math.ceil(Math.sqrt(functions.length));
+            const spacing = Math.min(width, height) / (cols + 1);
+            
+            const positions = functions.map((_, i) => {
+                const col = i % cols;
+                const row = Math.floor(i / cols);
+                return {
+                    x: spacing * (col + 1) + (Math.random() - 0.5) * 20,
+                    y: spacing * (row + 1) + (Math.random() - 0.5) * 20,
+                    vx: 0,
+                    vy: 0
+                };
+            });
+
             if (width <= 0 || height <= 0) {
                 return positions.map(() => ({ x: 100, y: 100, vx: 0, vy: 0 }));
             }
 
-            // Improved force simulation with better spacing
             for (let iter = 0; iter < 150; iter++) {
-                // Stronger repulsion between nodes for better spacing
                 for (let i = 0; i < positions.length; i++) {
                     for (let j = i + 1; j < positions.length; j++) {
                         const dx = positions[j].x - positions[i].x;
                         const dy = positions[j].y - positions[i].y;
                         const distance = Math.sqrt(dx * dx + dy * dy) || 1;
-                        const minDistance = 80; // Minimum distance between nodes
+                        const minDistance = 100;
                         
                         if (distance < minDistance) {
-                            const force = (minDistance - distance) / distance * 2;
+                            const force = (minDistance - distance) / distance * 3;
                             positions[i].vx -= (dx / distance) * force;
-                            positions[i].vy -= (dy / distance) * force;
+                            positions[i].vy -= (dx / distance) * force;
                             positions[j].vx += (dx / distance) * force;
                             positions[j].vy += (dy / distance) * force;
                         } else {
-                            const force = 2000 / (distance * distance);
+                            const force = 2500 / (distance * distance);
                             positions[i].vx -= (dx / distance) * force;
                             positions[i].vy -= (dy / distance) * force;
                             positions[j].vx += (dx / distance) * force;
@@ -614,7 +1190,6 @@ export class FlowVisualizer {
                     }
                 }
 
-                // Moderate attraction for connected nodes
                 functions.forEach((func, i) => {
                     func.calls.forEach(calledFunc => {
                         const j = functions.findIndex(f => f.name === calledFunc);
@@ -622,7 +1197,7 @@ export class FlowVisualizer {
                             const dx = positions[j].x - positions[i].x;
                             const dy = positions[j].y - positions[i].y;
                             const distance = Math.sqrt(dx * dx + dy * dy) || 1;
-                            const force = distance * 0.005;
+                            const force = distance * 0.008;
                             
                             positions[i].vx += (dx / distance) * force;
                             positions[i].vy += (dy / distance) * force;
@@ -632,14 +1207,12 @@ export class FlowVisualizer {
                     });
                 });
 
-                // Apply velocities with damping
                 positions.forEach(pos => {
                     pos.x += pos.vx;
                     pos.y += pos.vy;
                     pos.vx *= 0.85;
                     pos.vy *= 0.85;
 
-                    // Keep in bounds with padding
                     pos.x = Math.max(80, Math.min(width - 80, pos.x));
                     pos.y = Math.max(80, Math.min(height - 80, pos.y));
                 });
@@ -653,7 +1226,6 @@ export class FlowVisualizer {
             const levels = new Map();
             const visited = new Set();
 
-            // Calculate max depth reachable from each node
             function getMaxDepth(node, depthVisited = new Set()) {
                 if (depthVisited.has(node.name)) return 0;
                 depthVisited.add(node.name);
@@ -672,16 +1244,12 @@ export class FlowVisualizer {
                 return maxDepth;
             }
 
-            // Only show nodes that are part of chains with depth >= 2
-            // OR nodes that are important hubs (called by 2+ functions)
             const meaningfulNodes = new Set();
             
             functions.forEach(func => {
                 const depth = getMaxDepth(func);
-                // Include if: part of deep chain (depth >= 2) OR is a hub (called by 2+ functions)
                 if (depth >= 2 || func.calledBy.length >= 2) {
                     meaningfulNodes.add(func.name);
-                    // Also include all nodes in the chain from this node
                     const toVisit = [func];
                     const chainVisited = new Set();
                     while (toVisit.length > 0) {
@@ -700,7 +1268,6 @@ export class FlowVisualizer {
                 }
             });
 
-            // Also include all callers of meaningful nodes
             functions.forEach(func => {
                 func.calls.forEach(calledName => {
                     if (meaningfulNodes.has(calledName)) {
@@ -709,12 +1276,10 @@ export class FlowVisualizer {
                 });
             });
 
-            // Use meaningful nodes if found, otherwise fall back to any connected nodes
             const functionsToDisplay = meaningfulNodes.size > 0 
                 ? functions.filter(f => meaningfulNodes.has(f.name))
                 : functions.filter(f => f.calls.length > 0 || f.calledBy.length > 0);
 
-             // Find root nodes (not called by anyone in our display set)
             const roots = functionsToDisplay.filter(f => 
                 f.calledBy.length === 0 || 
                 !f.calledBy.some(caller => meaningfulNodes.has(caller))
@@ -724,7 +1289,6 @@ export class FlowVisualizer {
                 roots.push(functionsToDisplay[0]);
             }
             
-            // BFS to assign levels
             function assignLevels(node, level) {
                 if (visited.has(node.name)) return;
                 visited.add(node.name);
@@ -744,21 +1308,15 @@ export class FlowVisualizer {
 
             roots.forEach(root => assignLevels(root, 0));
 
-            // Don't show unvisited nodes in hierarchical mode - they're isolated
-            // (This is intentionally removed from hierarchical mode)
-
-            // Initialize all positions (including isolated nodes with off-screen positions)
             for (let i = 0; i < functions.length; i++) {
                 const func = functions[i];
                 if (visited.has(func.name)) {
-                    positions[i] = { x: 0, y: 0 }; // Will be set properly below
+                    positions[i] = { x: 0, y: 0 };
                 } else {
-                    // Hide isolated nodes by positioning them off-screen
                     positions[i] = { x: -10000, y: -10000 };
                 }
             }
 
-            // Position only visited (connected) nodes
             const maxLevel = levels.size > 0 ? Math.max(...levels.keys()) : 0;
             levels.forEach((nodes, level) => {
                 const y = maxLevel > 0 ? (level / maxLevel) * (height - 100) + 50 : height / 2;
@@ -778,17 +1336,20 @@ export class FlowVisualizer {
 
         function showInfo(func) {
             const panel = document.getElementById('info-panel');
+            const fileName = func.fileName ? func.fileName.split('/').pop() : 'Unknown'; // Add this line
             panel.innerHTML = \`
                 <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
-                    <h3 style="margin: 0;">\${func.name}</h3>
+                    <h3 style="margin: 0;">\${func.displayName || func.name}</h3>
                     <button onclick="hideInfo()" style="background: transparent; color: var(--vscode-foreground); border: none; cursor: pointer; font-size: 18px; padding: 0; margin: 0; line-height: 1;">×</button>
                 </div>
                 <ul>
+                    <li><strong>File:</strong> \${fileName}</li>
                     <li><strong>Lines:</strong> \${func.startLine} - \${func.endLine}</li>
                     <li><strong>Complexity:</strong> \${func.complexity}</li>
                     <li><strong>Parameters:</strong> \${func.params.length}</li>
                     <li><strong>Calls:</strong> \${func.calls.length} function(s)</li>
                     <li><strong>Called by:</strong> \${func.calledBy.length} function(s)</li>
+                    \${func.fileName ? '<li><strong>File:</strong> ' + func.fileName + '</li>' : ''}
                 </ul>
             \`;
             panel.style.display = 'block';
@@ -799,10 +1360,10 @@ export class FlowVisualizer {
             panel.style.display = 'none';
         }
 
-        function setupInteractions(svg, g) {
+        function initializeGlobalEvents() {
+            const svg = document.getElementById('main-svg');
             const canvas = document.getElementById('canvas');
 
-            // Helper function to check if element is or is inside a node
             function isElementInNode(element) {
                 let current = element;
                 while (current && current !== svg) {
@@ -814,16 +1375,13 @@ export class FlowVisualizer {
                 return false;
             }
 
-            // Background click to hide info panel
             svg.addEventListener('click', (e) => {
                 if (!isElementInNode(e.target)) {
                     hideInfo();
                 }
             });
 
-            // Function to handle mousedown for panning
             function handlePanStart(e) {
-                // Only start panning if NOT clicking on a node
                 if (!isElementInNode(e.target)) {
                     e.preventDefault();
                     e.stopPropagation();
@@ -834,38 +1392,35 @@ export class FlowVisualizer {
                 }
             }
 
-            // Attach mousedown to both SVG and canvas
             svg.addEventListener('mousedown', handlePanStart);
             canvas.addEventListener('mousedown', handlePanStart);
 
-            // Global mousemove for both panning and node dragging
             window.addEventListener('mousemove', (e) => {
                 if (isPanning && !isDraggingNode) {
-                    // Background panning
                     translateX = e.clientX - panStartX;
                     translateY = e.clientY - panStartY;
-                    g.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
+                    // FIX: Use global gElement
+                    if (gElement) {
+                        gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
+                    }
+                    updateLinkVisibility();
                 } else if (isDraggingNode && draggedNodeIndex >= 0) {
-                    // Node dragging
                     const pt = svg.createSVGPoint();
                     pt.x = e.clientX;
                     pt.y = e.clientY;
                     const svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
                     
-                    // Apply inverse transform to get position in graph coordinates
                     const x = (svgP.x - translateX) / scale;
                     const y = (svgP.y - translateY) / scale;
                     
-                    // Update position
                     nodePositions[draggedNodeIndex].x = x;
                     nodePositions[draggedNodeIndex].y = y;
                     
-                    // Update positions without full re-render
                     updateNodePositions();
+                    updateLinkVisibility();
                 }
             });
 
-            // Global mouseup to handle both panning and node dragging
             window.addEventListener('mouseup', () => {
                 if (isPanning) {
                     isPanning = false;
@@ -877,19 +1432,46 @@ export class FlowVisualizer {
                     draggedNodeIndex = -1;
                     canvas.style.cursor = 'grab';
                     
-                    // Remove dragging class from all nodes
-                    const nodes = gElement.querySelectorAll('.node');
-                    nodes.forEach(node => node.classList.remove('dragging'));
+                    if (gElement) {
+                        const nodes = gElement.querySelectorAll('.node');
+                        nodes.forEach(node => node.classList.remove('dragging'));
+                    }
                 }
             });
 
-            // Zoom with mouse wheel
+            // Wheel zoom
             svg.addEventListener('wheel', (e) => {
                 e.preventDefault();
-                const delta = e.deltaY > 0 ? 0.9 : 1.1;
-                scale *= delta;
-                scale = Math.max(0.1, Math.min(5, scale));
-                g.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
+                const oldScale = scale;
+                const delta = e.deltaY > 0 ? 0.95 : 1.05;
+                const newScale = Math.max(0.1, Math.min(5, oldScale * delta));
+                
+                // Get mouse position in screen coordinates
+                const rect = svg.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                // Adjust translation to zoom toward mouse cursor
+                translateX = mouseX - (mouseX - translateX) * (newScale / oldScale);
+                translateY = mouseY - (mouseY - translateY) * (newScale / oldScale);
+                
+                scale = newScale;
+                
+                if (gElement) {
+                    gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
+                }
+
+                if (isWorkspaceMode && currentLayout === 'force' && expandedFiles.size === 0) {
+                    const wasBelow = oldScale <= ZOOM_THRESHOLD;
+                    const isAbove = scale > ZOOM_THRESHOLD;
+                    
+                    if (wasBelow && isAbove) {
+                        renderVisualization();
+                    } else if (!wasBelow && !isAbove) {
+                        renderVisualization();
+                    }
+                }
+                updateLayoutDescription();
             });
         }
 
@@ -897,25 +1479,23 @@ export class FlowVisualizer {
             scale = 1;
             translateX = 0;
             translateY = 0;
-            nodePositions = []; // Clear stored positions to recalculate layout
+            expandedFiles.clear();
+            nodePositions = [];
             renderVisualization();
         }
 
         function toggleLayout() {
             currentLayout = currentLayout === 'force' ? 'hierarchical' : 'force';
-            nodePositions = []; // Clear stored positions when changing layouts
+            expandedFiles.clear();
+            nodePositions = [];
             
-            // Update layout info badge and description
             const layoutInfo = document.getElementById('layout-info');
-            const layoutDesc = document.getElementById('layout-description');
             
-            if (layoutInfo && layoutDesc) {
+            if (layoutInfo) {
                 if (currentLayout === 'hierarchical') {
                     layoutInfo.textContent = 'Hierarchical Layout';
-                    layoutDesc.textContent = 'Showing only deep call chains (depth ≥ 2) and important hubs';
                 } else {
                     layoutInfo.textContent = 'Force Layout';
-                    layoutDesc.textContent = 'Showing all connected functions';
                 }
             }
             
@@ -923,21 +1503,71 @@ export class FlowVisualizer {
         }
 
         function zoomIn() {
-            scale *= 1.2;
-            const g = document.querySelector('#main-group');
-            if (g) {
-                g.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
+            const oldScale = scale;
+            const newScale = oldScale * 1.2;
+            
+            // Get canvas center in screen coordinates
+            const canvas = document.getElementById('canvas');
+            const rect = canvas.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+            
+            // Adjust translation to zoom toward center
+            translateX = centerX - (centerX - translateX) * (newScale / oldScale);
+            translateY = centerY - (centerY - translateY) * (newScale / oldScale);
+            
+            scale = newScale;
+            
+            if (gElement) {
+                gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
             }
+
+            // Check threshold crossing only if no file is explicitly selected
+            if (isWorkspaceMode && currentLayout === 'force' && expandedFiles.size === 0) {
+                const wasBelow = oldScale <= ZOOM_THRESHOLD;
+                const isAbove = scale > ZOOM_THRESHOLD;
+                
+                if (wasBelow && isAbove) {
+                    renderVisualization();
+                }
+            }
+            
+            updateLayoutDescription();
         }
 
         function zoomOut() {
-            scale *= 0.8;
-            const g = document.querySelector('#main-group');
-            if (g) {
-                g.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
+            const oldScale = scale;
+            const newScale = oldScale * 0.8;
+            
+            // Get canvas center in screen coordinates
+            const canvas = document.getElementById('canvas');
+            const rect = canvas.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+            
+            // Adjust translation to zoom toward center
+            translateX = centerX - (centerX - translateX) * (newScale / oldScale);
+            translateY = centerY - (centerY - translateY) * (newScale / oldScale);
+            
+            scale = newScale;
+            
+            if (gElement) {
+                gElement.setAttribute('transform', \`translate(\${translateX}, \${translateY}) scale(\${scale})\`);
             }
-        }
 
+            // Check threshold crossing only if no file is explicitly selected
+            if (isWorkspaceMode && currentLayout === 'force' && expandedFiles.size === 0) {
+                const wasAbove = oldScale > ZOOM_THRESHOLD;
+                const isBelow = scale <= ZOOM_THRESHOLD;
+                
+                if (wasAbove && isBelow) {
+                    renderVisualization();
+                }
+            }
+            
+            updateLayoutDescription();
+}
+        initializeGlobalEvents();
         // Initial render
         renderVisualization();
     </script>

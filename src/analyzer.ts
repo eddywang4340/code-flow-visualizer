@@ -7,13 +7,14 @@ import Java = require('tree-sitter-java');
 
 export interface FunctionNode {
     name: string;
+    displayName: string; // Add this - clean name for display
     startLine: number;
     endLine: number;
     calls: string[];
     calledBy: string[];
     params: string[];
     complexity: number;
-    fileName: string;
+    fileName?: string; // Added for clustering
 }
 
 export interface CodeAnalysis {
@@ -301,7 +302,9 @@ export class CodeAnalyzer {
     private buildReverseDependencies(analysis: CodeAnalysis) {
         for (const [funcName, funcNode] of analysis.functions) {
             for (const calledFunc of funcNode.calls) {
-                const targetFunc = analysis.functions.get(calledFunc);
+                const targetFunc = [...analysis.functions.values()]
+                    .find(f => f.name === calledFunc);
+
                 if (targetFunc) {
                     targetFunc.calledBy.push(funcName);
                 }
@@ -323,6 +326,7 @@ export class CodeAnalyzer {
             
             analysis.functions.set(functionName, {
                 name: functionName,
+                displayName: functionName, // Add this line
                 startLine,
                 endLine: startLine + 10,
                 calls: [],
@@ -333,7 +337,6 @@ export class CodeAnalyzer {
             });
         }*/
     }
-
     mergeAnalyses(analyses: CodeAnalysis[]): CodeAnalysis {
         const merged: CodeAnalysis = {
             fileName: 'Workspace Analysis',
@@ -343,6 +346,7 @@ export class CodeAnalyzer {
             exports: []
         };
 
+        // First pass: add all functions with unique keys
         for (const analysis of analyses) {
             for (const [name, func] of analysis.functions) {
                 // Ensure unique names across files for the visualizer
@@ -355,6 +359,49 @@ export class CodeAnalyzer {
             }
             merged.imports.push(...analysis.imports);
             merged.exports.push(...analysis.exports);
+        }
+
+        // Second pass: update call relationships to use unique keys
+        for (const analysis of analyses) {
+            const fileLabel = analysis.fileName.split('/').pop() || analysis.fileName;
+            
+            for (const [name, func] of analysis.functions) {
+                const uniqueKey = `${name}::${fileLabel}`;
+                const mergedFunc = merged.functions.get(uniqueKey);
+                
+                if (mergedFunc) {
+                    // Update calls to use unique keys
+                    mergedFunc.calls = func.calls.map(calledName => {
+                        // First try to find in same file
+                        const sameFileKey = `${calledName}::${fileLabel}`;
+                        if (merged.functions.has(sameFileKey)) {
+                            return sameFileKey;
+                        }
+                        
+                        // Otherwise find any function with this base name
+                        for (const [key] of merged.functions) {
+                            if (key.startsWith(calledName + '::')) {
+                                return key;
+                            }
+                        }
+                        
+                        // If not found, return original (might be external)
+                        return calledName;
+                    });
+                    
+                    mergedFunc.calledBy = [];
+                }
+            }
+        }
+
+        // Third pass: rebuild calledBy relationships
+        for (const [funcKey, func] of merged.functions) {
+            for (const calledKey of func.calls) {
+                const calledFunc = merged.functions.get(calledKey);
+                if (calledFunc && !calledFunc.calledBy.includes(funcKey)) {
+                    calledFunc.calledBy.push(funcKey);
+                }
+            }
         }
 
         return merged;
