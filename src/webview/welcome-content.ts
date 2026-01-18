@@ -32,7 +32,7 @@ export function getWelcomeHTML(): string {
                     <p class="hero-subtitle">Transform your codebase into interactive visual insights</p>
                     
                     <div class="quick-start">
-                        <button class="cta-button" onclick="analyzeWorkspace()">
+                        <button class="cta-button secondary" onclick="analyzeWorkspace()">
                             <span class="button-icon">📁</span>
                             Analyze Workspace
                         </button>
