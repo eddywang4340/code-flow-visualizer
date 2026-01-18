@@ -166,9 +166,9 @@ export function getWebviewStyles(): string {
         }
 
         .node.highlighted {
-            filter: brightness(1.4);
+            filter: brightness(1);
             stroke: var(--vscode-textLink-activeForeground);
-            stroke-width: 3px;
+            stroke-width: 1px;
         }
 
         .node-text {

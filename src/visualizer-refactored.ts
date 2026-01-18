@@ -40,7 +40,7 @@ export class FlowVisualizer {
 
         // Handle messages from webview
         this._panel.webview.onDidReceiveMessage(
-            message => {
+            async message => {
                 switch (message.command) {
                     case 'navigateToFunction':
                         this._navigateToFunction(message.functionName, message.line, message.fileName);
@@ -61,6 +61,39 @@ export class FlowVisualizer {
                             this._updateContent();
                         }
                         break;
+                        case 'analyzeComplexity':
+                            // Call your LLM here
+                            try {
+                                const response = await fetch('http://127.0.0.1:8000/analyze', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                    },
+                                    body: JSON.stringify({ 
+                                        code: message.code 
+                                    })
+                                });
+
+                                if (!response.ok) {
+                                    throw new Error(`Backend error: ${response.statusText}`);
+                                }
+
+                                const result: any = await response.json();
+                                
+                                // Send result back to WebView
+                                this._panel.webview.postMessage({
+                                    command: 'updateComplexity',
+                                    complexity: result.bigO || "Unknown", // Fallback if undefined
+                                    description: result.description || "Unknown"
+                                });
+                            } catch (err: any) {
+                                vscode.window.showErrorMessage(`LLM Analysis failed: ${err.message}`);
+                                this._panel.webview.postMessage({
+                                    command: 'updateComplexity',
+                                    complexity: "Error" // Update UI to show error state
+                                });
+                            }
+                            break;
                 }
             },
             null,
@@ -511,7 +544,7 @@ export class FlowVisualizer {
                 hoverHint.setAttribute('x', (bounds.x + bounds.width / 2).toString());
                 hoverHint.setAttribute('y', (bounds.y + bounds.height - 15).toString());
                 hoverHint.setAttribute('text-anchor', 'middle');
-                hoverHint.setAttribute('fill', 'rgba(255, 255, 255, 0.4)');
+                hoverHint.setAttribute('fill', 'rgb(255, 255, 255, 0.4)');
                 hoverHint.setAttribute('font-size', '10px');
                 hoverHint.textContent = 'Click to expand';
                 blockG.appendChild(hoverHint);
