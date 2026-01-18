@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CodeAnalyzer } from './analyzer';
-import { FlowVisualizer } from './visualizer';
+import { FlowVisualizer } from './visualizer-refactored';
     
 let currentVisualizer: FlowVisualizer | undefined;
 
@@ -12,7 +12,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (currentVisualizer) {
             currentVisualizer.reveal();
         } else {
-            currentVisualizer = new FlowVisualizer(context.extensionUri);
+            currentVisualizer = new FlowVisualizer(context.extensionUri, context);
             currentVisualizer.onDidDispose(() => {
                 currentVisualizer = undefined;
             });
@@ -34,7 +34,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Create or show visualizer
         if (!currentVisualizer) {
-            currentVisualizer = new FlowVisualizer(context.extensionUri);
+            currentVisualizer = new FlowVisualizer(context.extensionUri, context);
             currentVisualizer.onDidDispose(() => {
                 currentVisualizer = undefined;
             });
@@ -70,7 +70,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Create or show visualizer
         if (!currentVisualizer) {
-            currentVisualizer = new FlowVisualizer(context.extensionUri);
+            currentVisualizer = new FlowVisualizer(context.extensionUri, context);
             currentVisualizer.onDidDispose(() => {
                 currentVisualizer = undefined;
             });
