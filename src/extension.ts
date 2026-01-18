@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { CodeAnalyzer } from './analyzer';
 import { FlowVisualizer } from './visualizer';
-
+    
 let currentVisualizer: FlowVisualizer | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
