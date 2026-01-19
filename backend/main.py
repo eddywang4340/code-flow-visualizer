@@ -1,5 +1,6 @@
 import os
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
@@ -9,6 +10,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = FastAPI(title="Flow Visualizer Backend")
+
+# --- ADD THIS BLOCK ---
+# This tells the server to accept requests from your VS Code extension
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins (safest for VS Code webviews during dev)
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (POST, GET, etc.)
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Initialize Gemini Client
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
