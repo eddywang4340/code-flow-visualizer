@@ -177,10 +177,6 @@ Basic support for other languages with generic function pattern matching.
 
 Contributions welcome! This was built for a hackathon but can be extended.
 
-## License
-eddys a dog
-MIT
-
 ## Hackathon Notes
 
 Built during [Hackathon Name] to solve the common developer problem of understanding code structure in large codebases. The AR-like visualization helps developers "see" their code architecture without specialized hardware.
